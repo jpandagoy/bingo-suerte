@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0f1b2d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Bingo de la Suerte</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root{--bg:#0f1b2d;--bg2:#16263d;--card:#1c2f4a;--line:#2b4466;--tx:#eef3fa;--mut:#9fb2cc;--acc:#ffcc33;--ok:#2ecc71;--warn:#ffa726;--bad:#ff5252;--red:#e53935;--ball:#22c55e;--hot:#ff9800;
+  --r:14px;--safe-b:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);font:15px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overscroll-behavior:none}
+body{display:flex;flex-direction:column}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+input{font:inherit}
+header.top{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg2);border-bottom:1px solid var(--line);min-height:52px}
+header.top h1{font-size:17px;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+header.top h1 small{display:block;font-size:12px;color:var(--mut);font-weight:500}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:var(--card);border:1px solid var(--line);font-size:13px;white-space:nowrap}
+.chip b{color:var(--acc)}
+main{flex:1;overflow:auto;position:relative}
+section.view{display:none;padding:14px 14px calc(90px + var(--safe-b))}
+section.view.on{display:block}
+nav.tabs{position:fixed;left:0;right:0;bottom:0;display:grid;grid-template-columns:repeat(4,1fr);background:var(--bg2);border-top:1px solid var(--line);padding-bottom:var(--safe-b);z-index:20}
+nav.tabs button{padding:8px 0 9px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11.5px;color:var(--mut);position:relative}
+nav.tabs button svg{width:24px;height:24px}
+nav.tabs button.on{color:var(--acc)}
+nav.tabs .badge{position:absolute;top:4px;left:calc(50% + 8px);background:var(--warn);color:#000;border-radius:999px;font-size:10.5px;font-weight:700;padding:0 5px;min-width:17px;line-height:17px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;border-radius:12px;background:var(--card);border:1px solid var(--line);font-weight:600;min-height:46px}
+.btn.pri{background:var(--acc);color:#1a1300;border-color:var(--acc)}
+.btn.ok{background:var(--ok);color:#002b12;border-color:var(--ok)}
+.btn.bad{background:transparent;color:var(--bad);border-color:#5a2a33}
+.btn.sm{padding:7px 11px;min-height:36px;font-size:13.5px;border-radius:10px}
+.btn:disabled{opacity:.45}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.grow{flex:1}
+.panel{background:var(--bg2);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin-bottom:12px}
+.panel h2{font-size:15px;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+.mut{color:var(--mut)}
+.small{font-size:12.5px}
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}
+.field label{font-size:12.5px;color:var(--mut)}
+.field input{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:11px 12px;color:var(--tx);font-size:17px;width:100%}
+.field input:focus{outline:2px solid var(--acc);border-color:transparent}
+.empty{text-align:center;color:var(--mut);padding:28px 10px}
+/* ---------- tarjeta de cartón ---------- */
+.cardbox{background:var(--bg2);border:1px solid var(--line);border-radius:var(--r);padding:10px;margin-bottom:10px}
+.cardbox.review{border-color:var(--warn)}
+.cardhead{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:700}
+.cardhead .ser{color:#ff6b6b;font-weight:700}
+.cardhead .sp{flex:1}
+.mini{display:grid;grid-template-columns:repeat(9,1fr);gap:2px;background:#000;border:2px solid #000;border-radius:6px;overflow:hidden}
+.mini div{background:#fff;color:#111;text-align:center;font-weight:800;font-size:15px;line-height:28px;height:28px;font-variant-numeric:tabular-nums}
+.mini div.blk{background:#111}
+.mini div.hit{background:var(--ball);color:#fff}
+.mini div.need{background:#ffe0b2;color:#b45309;outline:2px solid var(--hot);outline-offset:-2px}
+.mini div.dub{background:#fff3cd;color:#8a5300;outline:2px solid var(--warn);outline-offset:-2px}
+/* ---------- escáner ---------- */
+#scanWrap{position:relative;background:#000;border-radius:var(--r);overflow:hidden;aspect-ratio:3/4;max-height:62vh;width:100%}
+#video{width:100%;height:100%;object-fit:contain;display:block}
+#overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#scanMsg{position:absolute;left:10px;right:10px;bottom:10px;padding:10px 12px;border-radius:12px;background:rgba(0,0,0,.66);font-weight:600;text-align:center;font-size:15px}
+#scanMsg.good{background:rgba(22,163,74,.92)}
+#scanMsg.warn{background:rgba(234,88,12,.92)}
+#scanStart{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px;text-align:center;background:linear-gradient(#0b1424,#13233a)}
+.toolbar{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}
+.toolbar .btn{flex:1;min-width:0;padding:10px 8px;font-size:13.5px}
+#lastScan .cardbox{margin:0}
+/* ---------- jugar ---------- */
+#playTop{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 0 8px;margin:-14px 0 6px}
+.phase{display:flex;gap:6px;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:4px}
+.phase button{flex:1;padding:9px 6px;border-radius:9px;font-weight:700;font-size:13.5px;color:var(--mut)}
+.phase button.on{background:var(--acc);color:#1a1300}
+.lastline{display:flex;align-items:center;gap:10px;margin-top:8px}
+.bigball{width:58px;height:58px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff 0 12%,#ffd54f 13% 100%);color:#1a1300;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:900;box-shadow:0 2px 10px rgba(0,0,0,.4);flex:none}
+.bigball.empty{background:var(--card);color:var(--mut);font-size:13px;font-weight:600}
+.prev{display:flex;gap:5px;flex:1;overflow:hidden}
+.prev span{min-width:32px;height:32px;border-radius:50%;background:var(--card);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13.5px}
+.cnt{font-size:12px;color:var(--mut);text-align:right;line-height:1.25}
+.cnt b{font-size:18px;color:var(--tx);display:block}
+#board{display:grid;grid-template-columns:repeat(10,1fr);gap:4px;user-select:none}
+#board button{aspect-ratio:1/1;border-radius:9px;background:var(--card);border:1px solid var(--line);font-weight:800;font-size:16px;font-variant-numeric:tabular-nums;padding:0;position:relative}
+#board button.ph{visibility:hidden}
+#board button.on{background:var(--ball);border-color:var(--ball);color:#fff}
+#board button.hot:not(.on){border:2px solid var(--hot);color:var(--hot)}
+#board button.hot2:not(.on):not(.hot){border-color:#6b5a2e}
+#board button.flash{animation:fl .5s}
+@keyframes fl{0%{transform:scale(1.25);background:#fff;color:#000}100%{transform:scale(1)}}
+#board .util{aspect-ratio:auto;grid-column:span 3;font-size:13px;font-weight:700}
+#board .util.undo{color:var(--acc)}
+.near{margin-top:12px}
+.near h3{font-size:14px;margin:0 0 8px;display:flex;align-items:center;gap:8px}
+.nitem{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:11px;background:var(--bg2);border:1px solid var(--line);margin-bottom:6px}
+.nitem .k{font-weight:800;min-width:74px}
+.nitem .k small{display:block;color:#ff6b6b;font-weight:700;font-size:11.5px}
+.nitem .miss{display:flex;gap:4px;flex-wrap:wrap;flex:1}
+.nitem .miss span{min-width:30px;padding:3px 6px;border-radius:8px;background:#3a2a10;color:#ffb74d;font-weight:800;text-align:center;font-size:14px}
+.nitem .n{font-size:12px;color:var(--mut);text-align:right;white-space:nowrap}
+.nitem.one{border-color:var(--hot);background:#2a2110}
+.nitem.win{border-color:var(--ok);background:#0f2e1d}
+/* ---------- alerta ---------- */
+#alert{position:fixed;inset:0;z-index:50;display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;background:rgba(5,10,20,.92)}
+#alert.on{display:flex;animation:pop .25s}
+@keyframes pop{from{opacity:0;transform:scale(1.06)}to{opacity:1;transform:none}}
+#alert .t{font-size:54px;font-weight:900;letter-spacing:1px;color:var(--acc);text-shadow:0 0 30px rgba(255,204,51,.55)}
+#alert .t small{display:block;font-size:30px;letter-spacing:.5px}
+#alert.full .t{color:#4ade80;text-shadow:0 0 30px rgba(74,222,128,.55)}
+#alert .who{font-size:24px;font-weight:800}
+#alert .who .ser{color:#ff6b6b}
+#alert .mini{width:min(94vw,440px)}
+#alert .mini div{font-size:18px;line-height:36px;height:36px}
+#alert .acts{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+/* ---------- editor ---------- */
+.edgrid{display:grid;grid-template-columns:repeat(9,1fr);gap:3px;margin:8px 0}
+.edgrid input{width:100%;text-align:center;padding:8px 0;border-radius:7px;border:1px solid var(--line);background:#fff;color:#111;font-weight:800;font-size:16px}
+.edgrid input.blk{background:#111;border-color:#111;color:#111}
+.edgrid input.dub{background:#fff3cd;outline:2px solid var(--warn)}
+.edgrid input.bad{background:#ffd6d6;outline:2px solid var(--bad)}
+.thumb{width:100%;border-radius:8px;display:block;background:#fff}
+.msgs{font-size:12.5px;color:var(--warn);margin:4px 0}
+.toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:60;background:#111c2e;border:1px solid var(--line);padding:10px 14px;border-radius:12px;font-weight:600;box-shadow:0 6px 24px rgba(0,0,0,.4);width:max-content;max-width:92vw;text-align:center;display:none}
+.toast.on{display:block}
+dialog{border:1px solid var(--line);border-radius:16px;background:var(--bg2);color:var(--tx);padding:16px;width:min(94vw,460px);max-height:90vh}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+.list .gitem{display:flex;align-items:center;gap:10px;padding:11px;border-radius:12px;border:1px solid var(--line);background:var(--card);margin-bottom:8px}
+.list .gitem.cur{border-color:var(--acc)}
+.list .gitem .grow b{display:block}
+.seg{display:flex;gap:6px;margin-bottom:10px}
+.seg button{flex:1;padding:8px;border-radius:10px;background:var(--card);border:1px solid var(--line);font-weight:600;font-size:13px}
+.seg button.on{border-color:var(--acc);color:var(--acc)}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1 id="hTitle">Bingo de la Suerte<small id="hSub">Sin partida</small></h1>
+  <button class="chip" id="hSerie" title="Serie">Serie <b id="hSerieV">—</b></button>
+</header>
+<main>
+  <!-- PARTIDAS -->
+  <section class="view" id="v-games">
+    <div class="panel">
+      <h2>Nueva partida</h2>
+      <div class="field"><label>Nombre (opcional)</label><input id="gName" placeholder="Ej.: Sorteo domingo"></div>
+      <div class="field"><label>Serie de tus cartones (4 dígitos, la roja)</label><input id="gSerie" inputmode="numeric" maxlength="4" placeholder="0479"></div>
+      <button class="btn pri" id="gCreate" style="width:100%">Crear y escanear cartones</button>
+    </div>
+    <div class="panel">
+      <h2>Mis partidas</h2>
+      <div class="list" id="gList"></div>
+    </div>
+    <div class="panel">
+      <h2>Respaldo</h2>
+      <p class="mut small" style="margin:0 0 10px">Todo se guarda en este teléfono. Puedes exportar una copia por si cambias de equipo.</p>
+      <div class="row"><button class="btn sm" id="bExport">Exportar copia</button><label class="btn sm">Importar copia<input type="file" id="bImport" accept="application/json" hidden></label></div>
+      <p class="mut small" id="appVer" style="margin:10px 0 0"></p>
+    </div>
+  </section>
+
+  <!-- ESCANEAR -->
+  <section class="view" id="v-scan">
+    <div id="scanWrap">
+      <video id="video" playsinline muted></video>
+      <canvas id="overlay"></canvas>
+      <div id="scanMsg">Apunta al cartón</div>
+      <div id="scanStart">
+        <div style="font-size:18px;font-weight:700">Escáner de cartones</div>
+        <div class="mut small">Pon un cartón sobre la mesa, con buena luz, y enfócalo entero (con el número de cartón arriba). Se guarda solo cuando la imagen está quieta y nítida.</div>
+        <button class="btn pri" id="camStart">Abrir cámara</button>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button class="btn" id="tTorch" disabled>Linterna</button>
+      <button class="btn" id="tGroup" disabled>Foto de grupo</button>
+      <label class="btn">Galería<input type="file" id="tFiles" accept="image/*" multiple hidden></label>
+    </div>
+    <div id="lastScan"></div>
+    <p class="mut small" style="margin-top:10px">Consejo: un cartón a la vez es lo más seguro (≈2 s por cartón). La foto de grupo sirve para 4–6 cartones bien separados sobre fondo liso.</p>
+  </section>
+
+  <!-- CARTONES -->
+  <section class="view" id="v-cards">
+    <div class="row" style="margin-bottom:10px"><div class="grow"><b id="cCount">0 cartones</b><div class="mut small" id="cSub"></div></div><button class="btn sm" id="cAdd">+ Manual</button></div>
+    <div class="seg" id="cSeg"><button data-f="all" class="on">Todos</button><button data-f="review">Por revisar</button></div>
+    <div id="cList"></div>
+  </section>
+
+  <!-- JUGAR -->
+  <section class="view" id="v-play">
+    <div id="playTop">
+      <div class="phase" id="phase"><button data-p="linea">1 · Línea</button><button data-p="full">2 · Tabla llena</button></div>
+      <div class="lastline">
+        <div class="bigball empty" id="bigBall">—</div>
+        <div class="prev" id="prevBalls"></div>
+        <div class="cnt"><b id="ballCnt">0</b>de 90</div>
+      </div>
+    </div>
+    <div id="board"></div>
+    <div class="near" id="near"></div>
+  </section>
+</main>
+
+<nav class="tabs" id="tabs">
+  <button data-v="games"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v5"/></svg>Partidas</button>
+  <button data-v="scan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3.5"/></svg>Escanear</button>
+  <button data-v="cards"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M3 14h18M9 6v12M15 6v12"/></svg>Cartones<span class="badge" id="revBadge" hidden>0</span></button>
+  <button data-v="play"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/></svg>Jugar</button>
+</nav>
+
+<div id="alert"><div class="t" id="aT">¡LÍNEA!</div><div class="who" id="aWho"></div><div id="aCard"></div><div class="mut" id="aMore"></div><div class="acts" id="aActs"></div></div>
+<div class="toast" id="toast"></div>
+<dialog id="dlg"></dialog>
+
+<script src="reader.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
