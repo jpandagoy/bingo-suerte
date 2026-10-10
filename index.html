@@ -26,8 +26,8 @@ header.top h1 small{display:block;font-size:12px;color:var(--mut);font-weight:50
 main{flex:1;overflow:auto;position:relative}
 section.view{display:none;padding:14px 14px calc(90px + var(--safe-b))}
 section.view.on{display:block}
-nav.tabs{position:fixed;left:0;right:0;bottom:0;display:grid;grid-template-columns:repeat(4,1fr);background:var(--bg2);border-top:1px solid var(--line);padding-bottom:var(--safe-b);z-index:20}
-nav.tabs button{padding:8px 0 9px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11.5px;color:var(--mut);position:relative}
+nav.tabs{position:fixed;left:0;right:0;bottom:0;display:grid;grid-template-columns:repeat(5,1fr);background:var(--bg2);border-top:1px solid var(--line);padding-bottom:var(--safe-b);z-index:20}
+nav.tabs button{padding:8px 0 9px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--mut);position:relative}
 nav.tabs button svg{width:24px;height:24px}
 nav.tabs button.on{color:var(--acc)}
 nav.tabs .badge{position:absolute;top:4px;left:calc(50% + 8px);background:var(--warn);color:#000;border-radius:999px;font-size:10.5px;font-weight:700;padding:0 5px;min-width:17px;line-height:17px}
@@ -133,6 +133,40 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
 .seg{display:flex;gap:6px;margin-bottom:10px}
 .seg button{flex:1;padding:8px;border-radius:10px;background:var(--card);border:1px solid var(--line);font-weight:600;font-size:13px}
 .seg button.on{border-color:var(--acc);color:var(--acc)}
+
+/* ---------- reglas / editor ---------- */
+.mini div.bad{background:#ffd6d6;color:#b91c1c;outline:2px solid var(--bad);outline-offset:-2px}
+.msgs.bad{color:#ff8a80}
+.edgrid .eh{font-size:10.5px;color:var(--mut);text-align:center;font-weight:600}
+.edgrid input.bad{background:#ffd6d6!important;color:#b91c1c;outline:2px solid var(--bad)}
+.field input.bad{outline:2px solid var(--bad)}
+.erows{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 6px}
+.erows span{font-size:12px;font-weight:700;padding:3px 8px;border-radius:8px}
+.erows .ok{background:#0f2e1d;color:#86efac}.erows .bad{background:#3b1518;color:#ff8a80}
+.btn.ok.off{background:#3b1518;border-color:#5a2a33;color:#ff8a80}
+.shake{animation:sh .35s}@keyframes sh{25%{transform:translateX(-6px)}50%{transform:translateX(6px)}75%{transform:translateX(-3px)}}
+.frow{display:flex;flex-direction:column;padding:8px 10px;border-radius:10px;margin-top:6px;background:var(--card);border-left:4px solid var(--ok);font-size:13.5px}
+.frow.bad{border-left-color:var(--bad)}.frow b{font-size:12.5px;color:var(--mut);font-weight:600}
+.pwarn{background:#3a2a10;border:1px solid var(--warn);color:#ffcc80;border-radius:10px;padding:8px 10px;margin-bottom:8px;font-size:13px;font-weight:600;cursor:pointer}
+nav.tabs .badge.bad{background:var(--bad);color:#fff}
+/* ---------- bitácora ---------- */
+.lgmods{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+.lgmod{display:flex;flex-direction:column;align-items:flex-start;padding:8px 10px;border-radius:10px;background:var(--card);border:1px solid var(--line);text-align:left;font-size:12.5px}
+.lgmod b{font-size:13px}.lgmod.e{border-color:var(--bad)}.lgmod.e span{color:#ff8a80}.lgmod.w{border-color:var(--warn)}.lgmod.w span{color:#ffcc80}.lgmod.ok span{color:#86efac}
+.lgh{font-size:14px;margin:14px 0 6px}
+.lgfail{padding:9px 10px;border-radius:10px;background:var(--card);border-left:4px solid var(--warn);margin-bottom:6px;font-size:13.5px;display:flex;flex-direction:column;gap:3px}
+.lgfail.error{border-left-color:var(--bad)}
+.lgsel{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 10px;color:var(--tx);font-size:14px;min-width:0}
+.lgrow{border-bottom:1px solid var(--line);font-size:13px}
+.lgrow summary{display:flex;gap:8px;padding:8px 2px;list-style:none;cursor:pointer;align-items:baseline}
+.lgrow summary::-webkit-details-marker{display:none}
+.lgrow .lgt{color:var(--mut);font-variant-numeric:tabular-nums;flex:none}
+.lgrow .lgm{flex:none;font-size:11px;padding:1px 6px;border-radius:6px;background:var(--card);color:var(--mut)}
+.lgrow .lgmsg{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lgrow[open] .lgmsg{white-space:normal}
+.lgrow.error .lgmsg{color:#ff8a80}.lgrow.warn .lgmsg{color:#ffcc80}
+.lgd pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto;margin:6px 0}
+.lgimg{width:100%;border-radius:8px;margin:4px 0 8px}
 </style>
 </head>
 <body>
@@ -189,6 +223,9 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     <div id="cList"></div>
   </section>
 
+  <!-- BITÁCORA (independiente: la dibuja log.js) -->
+  <section class="view" id="v-log"></section>
+
   <!-- JUGAR -->
   <section class="view" id="v-play">
     <div id="playTop">
@@ -199,6 +236,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
         <div class="cnt"><b id="ballCnt">0</b>de 90</div>
       </div>
     </div>
+    <div class="pwarn" id="playWarn" hidden></div>
     <div id="board"></div>
     <div class="near" id="near"></div>
   </section>
@@ -208,13 +246,17 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
   <button data-v="games"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v5"/></svg>Partidas</button>
   <button data-v="scan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3.5"/></svg>Escanear</button>
   <button data-v="cards"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M3 14h18M9 6v12M15 6v12"/></svg>Cartones<span class="badge" id="revBadge" hidden>0</span></button>
-  <button data-v="play"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/></svg>Jugar</button>
+  <button data-v="play" id="tabPlay"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/></svg>Jugar</button>
+  <button data-v="log"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>Bitácora<span class="badge bad" id="logBadge" hidden>0</span></button>
 </nav>
 
 <div id="alert"><div class="t" id="aT">¡LÍNEA!</div><div class="who" id="aWho"></div><div id="aCard"></div><div class="mut" id="aMore"></div><div class="acts" id="aActs"></div></div>
 <div class="toast" id="toast"></div>
 <dialog id="dlg"></dialog>
 
+<script>const APPV="bds-1.1";</script>
+<script src="log.js"></script>
+<script src="rules.js"></script>
 <script src="reader.js"></script>
 <script src="app.js"></script>
 </body>
