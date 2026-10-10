@@ -64,12 +64,12 @@ function ask(html,buttons){return new Promise(res=>{let done=false;const fin=v=>
   d.querySelectorAll("[data-i]").forEach(b=>b.onclick=()=>{const v=buttons[+b.dataset.i].v,f=d.querySelector("input");fin(v==="__input"?(f?f.value:""):v);d.close()})})}
 
 /* miniatura 3×9 de un cartón */
-function miniHTML(card,opts){opts=opts||{};const C=opts.called||new Set(),need=opts.need||new Set(),dub=new Set(card.dub||[]),bad=new Set(card.bad||[]);let h='<div class="mini">';
+function miniHTML(card,opts){opts=opts||{};const C=opts.called||new Set(),need=opts.need||new Set(),dub=new Set(card.dub||[]),bad=new Set(card.bad||[]),wr=new Set(opts.winRows||[]);let h='<div class="mini">';
   const G=card.grid||Rules.gridFromRows(card.rows);
   for(let r=0;r<3;r++)for(let c=0;c<9;c++){const i=r*9+c,v=G[r][c];
     if(v==null){h+='<div class="blk"></div>';continue}
     if(v===-1){h+='<div class="dub">?</div>';continue}
-    const cls=bad.has(i)?"bad":C.has(v)?"hit":need.has(v)?"need":dub.has(i)?"dub":"";h+=`<div class="${cls}">${v}</div>`}
+    const cls=(bad.has(i)?"bad":C.has(v)?"hit":need.has(v)?"need":dub.has(i)?"dub":"")+(wr.has(r)&&C.has(v)?" win":"");h+=`<div class="${cls}">${v}</div>`}
   return h+"</div>"}
 const issuesHTML=c=>(c.issues&&c.issues.length?`<div class="msgs bad">${c.issues.map(m=>"✕ "+esc(m)).join("<br>")}</div>`:"")+(c.dub&&c.dub.length?`<div class="msgs">⚠ ${c.dub.length} número(s) leídos con poca seguridad (amarillo)</div>`:"")+(c.warns&&c.warns.length?`<div class="msgs">${c.warns.map(m=>"ⓘ "+esc(m)).join("<br>")}</div>`:"");
 
@@ -452,13 +452,18 @@ function afterChange(newBall){
   else if(lineW.length){lineW.forEach(e=>g.alerted.linea.push(e.c.id));saveGame();showAlert("linea",lineW)}
   else{const ev1=ev.filter(e=>(g.phase||"linea")==="linea"?e.best===1:e.total===1);if(ev1.length)buzz(25)}
 }
+/* alerta: muestra TODOS los cartones que ganan con la misma bolilla (cada uno con su serie, fila ganadora y mini cartón) */
 function showAlert(kind,wins){
-  const A=$("#alert"),w=wins[0],C=called();A.className="on "+(kind==="full"?"full":"");P.sheet=false;
-  Log.add("info","juego","ALERT",`${kind==="full"?"TABLA LLENA":"LÍNEA"}: ${wins.map(e=>e.c.carton+"/"+e.c.serie).join(", ")}`,{bolas:S.game.draws.length,sinConfirmar:wins.filter(e=>!e.c.confirmed).length});
+  const A=$("#alert"),C=called(),ball=S.game.draws[S.game.draws.length-1];A.className="on "+(kind==="full"?"full":"");P.sheet=false;
+  wins=wins.slice().sort((a,b)=>String(a.c.serie).localeCompare(String(b.c.serie))||String(a.c.carton).localeCompare(String(b.c.carton)));
+  Log.add("info","juego","ALERT",`${kind==="full"?"TABLA LLENA":"LÍNEA"} con la ${ball}: ${wins.length} cartón(es) → ${wins.map(e=>e.c.carton+"/"+e.c.serie).join(", ")}`,{bola:ball,bolas:S.game.draws.length,ganadores:wins.map(e=>({carton:e.c.carton,serie:e.c.serie,fila:kind==="linea"?e.bestRow+1:null,confirmado:!!e.c.confirmed}))});
   $("#aT").innerHTML=kind==="full"?"¡BINGO!<small>TABLA LLENA</small>":"¡LÍNEA!";
-  $("#aWho").innerHTML=`Cartón ${esc(w.c.carton||"¿?")} · <span class="ser">Serie ${esc(w.c.serie||"—")}</span>${!w.c.confirmed?' <span class="chip" style="color:var(--warn)">⚠ cartón sin confirmar: compáralo con el físico</span>':""}`;
-  $("#aCard").innerHTML=miniHTML(w.c,{called:C});
-  $("#aMore").textContent=(kind==="linea"?`Fila ${w.bestRow+1} completa. `:"")+(wins.length>1?`También: ${wins.slice(1).map(e=>"cartón "+e.c.carton).join(", ")}`:"");
+  $("#aWho").innerHTML=wins.length>1?`<span class="acount">${wins.length} cartones ganan con la bolilla <b>${ball}</b></span>`:`Cartón ${esc(wins[0].c.carton||"¿?")} · <span class="ser">Serie ${esc(wins[0].c.serie||"—")}</span>`;
+  $("#aCard").innerHTML=wins.map(e=>{const rows=kind==="linea"?e.c.rows.map((r,i)=>r.length===5&&r.every(v=>C.has(v))?i:-1).filter(i=>i>=0):[0,1,2];
+    return`<div class="awin">${wins.length>1?`<div class="awh"><b>Cartón ${esc(e.c.carton||"¿?")}</b><span class="ser">Serie ${esc(e.c.serie||"—")}</span><span class="awr">${kind==="linea"?`fila ${rows.map(i=>i+1).join(" y ")}`:"15/15"}</span></div>`:""}
+      ${!e.c.confirmed?'<div class="awarn">⚠ cartón sin confirmar: compáralo con el físico</div>':""}${miniHTML(e.c,{called:C,winRows:rows})}</div>`}).join("");
+  $("#aMore").textContent=wins.length===1&&kind==="linea"?`Fila ${wins[0].bestRow+1} completa.`:wins.length>1?"Desliza para ver todos.":"";
+  $("#aMore").hidden=!(wins.length===1&&kind==="linea")&&!(wins.length>2);
   const acts=$("#aActs");acts.innerHTML=(kind==="linea"?'<button class="btn pri" data-a="full">Cobrado · seguir a tabla llena</button>':"")+'<button class="btn" data-a="x">Cerrar</button>';
   acts.querySelectorAll("button").forEach(b=>b.onclick=()=>{if(b.dataset.a==="full"){S.game.phase="full";Log.add("info","juego","PHASE","fase: full (desde alerta)");saveGame()}A.className="";render.play()});
   beep(kind==="full"?[[784,.15],[988,.15],[1175,.15],[1568,.4],[1175,.15],[1568,.5]]:[[988,.14],[1319,.14],[1568,.35],[1319,.14],[1568,.4]]);
