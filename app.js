@@ -67,7 +67,7 @@ const issuesHTML=c=>(c.issues&&c.issues.length?`<div class="msgs bad">${c.issues
 /* ================= navegación ================= */
 function go(v){if((v==="scan"||v==="play"||v==="cards")&&!S.game){v="games";toast("Primero crea una partida")}
   if(S.view!==v)Log.add("info","app","NAV","→ "+v);S.view=v;$$("section.view").forEach(s=>s.classList.toggle("on",s.id==="v-"+v));$$("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
-  if(v!=="scan")Cam.stop();keepAwake(v==="play"||v==="scan");
+  if(v!=="scan"&&Cam.on)Cam.stop("Cámara apagada al cambiar de pestaña.");keepAwake(v==="play"||v==="scan");
   if(v==="log")Log.render();else render[v]&&render[v]();$("main").scrollTop=0}
 $$("#tabs button").forEach(b=>b.onclick=()=>go(b.dataset.v));
 function renderHeader(){const g=S.game;$("#hSub").textContent=g?`${g.name||"Partida"} · ${S.cards.length} cartones`:"Sin partida";$("#hSerieV").textContent=g&&g.serie?g.serie:"—";
@@ -107,15 +107,8 @@ $("#bImport").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(
 function toCanvas(src,maxSide){const w=src.videoWidth||src.naturalWidth||src.width,h=src.videoHeight||src.naturalHeight||src.height,k=Math.min(1,(maxSide||4000)/Math.max(w,h));
   const c=document.createElement("canvas");c.width=Math.max(1,Math.round(w*k));c.height=Math.max(1,Math.round(h*k));c.getContext("2d").drawImage(src,0,0,c.width,c.height);return c}
 function rotate90(src){const c=document.createElement("canvas");c.width=src.height;c.height=src.width;const x=c.getContext("2d");x.translate(c.width,0);x.rotate(Math.PI/2);x.drawImage(src,0,0);return c}
-/* lee un cartón ya localizado (esquinas) → resultado con cuadrícula 3×9 */
-function readCard(img,corners){
-  let r=BSReader.readGrid(img,corners,0),rot=0;
-  if(r.doubts.length>2){const r2=BSReader.readGrid(img,corners,1);if(r2.doubts.length<r.doubts.length){r=r2;rot=180}}
-  const grid=[...Array(3)].map(()=>Array(9).fill(null)),dub=[];
-  r.cells.forEach((row,ri)=>row.forEach(n=>{const i=ri*9+n.c;grid[ri][n.c]=n.v==null?-1:n.v;if(n.v==null||n.conf<.08||n.why)dub.push(i)}));
-  const carton=/^\d{1,4}$/.test(r.carton)?pad4(r.carton):"";if(carton&&r.cartonConf<.05)dub.push(-1);
-  return{carton,serieRead:pad4(r.serie),grid,dub,rot,blacks:r.blacks,cartonConf:+(r.cartonConf||0).toFixed(3),doubts:r.doubts.map(d=>d.why),thumb:r.thumb.toDataURL("image/jpeg",.72)};
-}
+/* lee un cartón ya localizado (la lógica está en reader.js, compartida con el motor en segundo plano) */
+function readCard(img,corners){const rd=BSReader.readCard(img,corners);rd.thumb=rd.thumbCanvas.toDataURL("image/jpeg",.72);delete rd.thumbCanvas;return rd}
 /* guarda una lectura aplicando TODAS las reglas → {kind:"ok"|"review"|"dup", card} */
 async function storeRead(rd,src){
   const g=S.game,serie=g.serie||"";
@@ -186,81 +179,125 @@ function showLast(s,keep){const c=s.card,box=$("#lastScan");lastShown=c;
   if(keep){const old=box.querySelector(".cardbox");if(old)old.outerHTML=html;else box.insertAdjacentHTML("beforeend",html)}else box.innerHTML=html;
   box.querySelector("[data-e]").onclick=()=>editCard(c)}
 
-/* ================= ESCÁNER EN VIVO ================= */
+/* ================= MOTOR DEL ESCÁNER (Worker en segundo plano; si el teléfono no lo soporta, en la página) ================= */
+const Eng=(()=>{let w=null,mode="main",id=0;const pend=new Map();
+  function fail(why,err){if(mode!=="worker")return;mode="main";Log.add("warn","camara","ENGINE_FALLBACK","el motor en segundo plano falló; sigo en la página: "+why,{err});for(const [,p] of pend)p.rej(new Error(why));pend.clear();try{w&&w.terminate()}catch(e){}w=null}
+  function init(tpl,extra){try{if(!window.Worker||!window.OffscreenCanvas||!window.createImageBitmap)throw new Error("sin Worker/OffscreenCanvas");
+      w=new Worker("worker.js");mode="worker";
+      w.onmessage=e=>{const m=e.data;if(m.type==="ready"){Log.add("info","camara","ENGINE",`motor en segundo plano listo (${m.n} plantillas)`);return}
+        const p=pend.get(m.id);if(!p)return;pend.delete(m.id);if(m.type==="error"){Log.add("error","lector","WORKER_ERROR",`error en ${m.op}: ${m.msg}`,{stack:m.stack});p.rej(new Error(m.msg))}else p.res(m)};
+      w.onerror=e=>fail("error del worker: "+(e.message||"desconocido"),e);
+      w.postMessage({type:"tpl",tpl,extra})}catch(e){mode="main";Log.add("info","camara","ENGINE","motor en la página ("+e.message+")")}}
+  const call=(msg,bmp)=>new Promise((res,rej)=>{const k=++id;pend.set(k,{res,rej});w.postMessage({...msg,id:k,bmp},[bmp])});
+  async function detect(bmp){if(mode==="worker"){try{return await call({type:"detect"},bmp)}catch(e){if(mode==="worker")throw e}}
+    const t0=performance.now(),d=BSReader.detect(bmp,{maxSide:640})[0]||null,r={q:d?d.corners:null,w:bmp.width,h:bmp.height,ms:performance.now()-t0};bmp.close&&bmp.close();return r}
+  async function read(bmp){if(mode==="worker"){try{const m=await call({type:"read"},bmp);if(m.none)return{none:true};m.rd.thumb=await blobToURL(m.blob);m.rd.res=m.res;m.rd.ms=Math.round(m.ms);return m.rd}catch(e){if(mode==="worker")throw e}}
+    const t0=performance.now(),d=BSReader.detect(bmp)[0];if(!d){bmp.close&&bmp.close();return{none:true}}const rd=BSReader.readCard(bmp,d.corners);rd.thumb=rd.thumbCanvas.toDataURL("image/jpeg",.72);delete rd.thumbCanvas;rd.res=[bmp.width,bmp.height];rd.ms=Math.round(performance.now()-t0);bmp.close&&bmp.close();return rd}
+  const blobToURL=b=>new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result);f.readAsDataURL(b)});
+  return{init,detect,read,get mode(){return mode}}})();
+
+/* ================= ESCÁNER EN VIVO =================
+   · sincronizado con cada cuadro nuevo de la cámara (requestVideoFrameCallback)
+   · detección y lectura fuera de la pantalla (Worker) → video fluido
+   · controles sobre el video: apagar, linterna, zoom, tocar para enfocar
+   · se apaga solo al salir de la pestaña, al minimizar la app o tras 2 min sin ver cartones */
 const Cam=(()=>{
-  let stream=null,track=null,run=false,busy=false,timer=null,hist=[],locked=false,lostN=0,lockQuad=null,lockRows=[],lockT=0,fails=0,torch=false;
-  let st={frames:0,det:0,ms:0,since:0,lastDet:0,warned:0};
-  const video=$("#video"),ov=$("#overlay"),msg=$("#scanMsg"),small=document.createElement("canvas");
+  let stream=null,track=null,run=false,inflight=false,reading=false,hist=[],locked=false,lostN=0,lockQ=null,lockRows=[],lockT=0,fails=0,torch=false,zoom=null,lastDet=0,lastQ=null,lastWH=[1,1],idleT=null,cnt=0;
+  let st={frames:0,det:0,ms:0,since:0,warned:0};
+  const video=$("#video"),ov=$("#overlay"),msg=$("#scanMsg");
   const say=(t,cls)=>{msg.textContent=t;msg.className=cls||""};
+  const IDLE_MS=120000;
+  const setCnt=()=>{const n=S.cards.length;$("#cCnt").textContent=`${n} cartón${n===1?"":"es"} en la partida`};
+  function ui(on){$("#scanWrap").classList.toggle("live",on);$("#scanStart").style.display=on?"none":"";$("#tGroup").disabled=!on}
   async function start(){
-    if(!S.game){toast("Primero crea una partida");return}
-    const end=Log.time();
-    try{stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}}})}
-    catch(e){const den=e.name==="NotAllowedError";say("No pude abrir la cámara: "+(den?"da permiso a la cámara en el navegador":e.message),"warn");Log.add("error","camara",den?"CAM_DENIED":"CAM_ERROR","no se pudo abrir la cámara: "+e.name,{err:e});return}
-    track=stream.getVideoTracks()[0];video.srcObject=stream;await video.play().catch(e=>Log.add("warn","camara","CAM_PLAY","video.play falló",{err:e}));
-    let cap={};try{cap=track.getCapabilities?track.getCapabilities():{};const adv=[];if(cap.focusMode&&cap.focusMode.includes("continuous"))adv.push({focusMode:"continuous"});if(adv.length)await track.applyConstraints({advanced:adv});
-      $("#tTorch").disabled=!cap.torch}catch(e){Log.add("warn","camara","CAM_CAPS","no se pudieron aplicar ajustes de cámara",{err:e})}
-    const s=track.getSettings?track.getSettings():{};end("info","camara","CAM_START",`cámara abierta ${s.width||"?"}×${s.height||"?"}`,{settings:s,torch:!!cap.torch,focus:cap.focusMode||null,label:track.label});
-    $("#tGroup").disabled=false;$("#scanStart").style.display="none";run=true;hist=[];locked=false;fails=0;st={frames:0,det:0,ms:0,since:Date.now(),lastDet:Date.now(),warned:0};say("Apunta al cartón");loop();
+    if(!S.game){toast("Primero crea una partida");return}if(run)return;
+    const end=Log.time();$("#camStart").disabled=true;$("#scanStartMsg").textContent="Abriendo cámara…";
+    try{stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:2560},height:{ideal:1440},frameRate:{ideal:30}}})}
+    catch(e){const den=e.name==="NotAllowedError";$("#camStart").disabled=false;$("#scanStartMsg").textContent=den?"Chrome no tiene permiso de cámara: toca el candado de la barra de direcciones → Permisos → Cámara → Permitir.":"No se pudo abrir la cámara ("+e.name+"). Cierra otras apps que la usen y vuelve a intentar.";
+      Log.add("error","camara",den?"CAM_DENIED":"CAM_ERROR","no se pudo abrir la cámara: "+e.name,{err:e});return}
+    $("#camStart").disabled=false;
+    track=stream.getVideoTracks()[0];video.srcObject=stream;try{await video.play()}catch(e){Log.add("warn","camara","CAM_PLAY","video.play falló",{err:e})}
+    let cap={};try{cap=track.getCapabilities?track.getCapabilities():{};const adv=[];if(cap.focusMode&&cap.focusMode.includes("continuous"))adv.push({focusMode:"continuous"});if(cap.exposureMode&&cap.exposureMode.includes("continuous"))adv.push({exposureMode:"continuous"});if(adv.length)await track.applyConstraints({advanced:adv})}catch(e){Log.add("warn","camara","CAM_CAPS","no se pudieron aplicar ajustes de cámara",{err:e})}
+    $("#cTorch").hidden=!cap.torch;zoom=cap.zoom&&cap.zoom.max>cap.zoom.min?{min:cap.zoom.min,max:Math.min(cap.zoom.max,4),step:cap.zoom.step||.1,v:(track.getSettings().zoom||cap.zoom.min)}:null;$("#cZoom").hidden=!zoom;showZoom();
+    const s=track.getSettings?track.getSettings():{};end("info","camara","CAM_START",`cámara abierta ${s.width||"?"}×${s.height||"?"} · motor ${Eng.mode==="worker"?"segundo plano":"página"}`,{settings:s,torch:!!cap.torch,zoom:cap.zoom||null,focus:cap.focusMode||null,label:track.label,rvfc:"requestVideoFrameCallback" in HTMLVideoElement.prototype});
+    video.style.objectFit=video.videoWidth>video.videoHeight?"contain":"cover";setCnt();
+    run=true;hist=[];locked=false;fails=0;cnt=0;lastDet=Date.now();st={frames:0,det:0,ms:0,since:Date.now(),warned:0};ui(true);say("Apunta al cartón");armIdle();pump();
   }
-  function stats(){if(!st.frames)return;Log.add("info","camara","CAM_STATS",`${st.frames} cuadros, cartón visible en ${Math.round(100*st.det/st.frames)}%`,{frames:st.frames,det:st.det,msDetect:Math.round(st.ms/st.frames),seg:Math.round((Date.now()-st.since)/1000)})}
-  function stop(){if(run){stats();Log.add("info","camara","CAM_STOP","cámara cerrada")}run=false;clearTimeout(timer);if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}track=null;torch=false;$("#scanStart").style.display="";$("#tTorch").disabled=true;$("#tGroup").disabled=true;
+  function stats(){if(!st.frames)return;Log.add("info","camara","CAM_STATS",`${st.frames} cuadros (${(st.frames/Math.max(1,(Date.now()-st.since)/1000)).toFixed(1)}/s), cartón visible en ${Math.round(100*st.det/st.frames)}%`,{frames:st.frames,det:st.det,msDetect:Math.round(st.ms/st.frames),seg:Math.round((Date.now()-st.since)/1000),motor:Eng.mode})}
+  /* apagar: libera la cámara de verdad (se apaga la luz de la cámara del teléfono) */
+  function stop(reason){if(run){stats();Log.add("info","camara","CAM_STOP","cámara apagada: "+(reason||"usuario"),{escaneados:cnt})}
+    run=false;clearTimeout(idleT);if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}video.srcObject=null;track=null;torch=false;$("#cTorch").classList.remove("on");ui(false);
+    $("#scanStartMsg").textContent=reason&&reason!=="usuario"?reason:"Cámara apagada.";$("#camStart").textContent="Encender cámara";
     const x=ov.getContext("2d");x.clearRect(0,0,ov.width,ov.height)}
-  function mapPt(p,vw,vh){const W=ov.clientWidth,H=ov.clientHeight,k=Math.min(W/vw,H/vh);return[(p[0]*vw/small.width)*k+(W-vw*k)/2,(p[1]*vh/small.height)*k+(H-vh*k)/2]}
-  function draw(q,color){const x=ov.getContext("2d"),dpr=devicePixelRatio||1;if(ov.width!==ov.clientWidth*dpr){ov.width=ov.clientWidth*dpr;ov.height=ov.clientHeight*dpr}
-    x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,ov.width,ov.height);if(!q)return;const vw=video.videoWidth,vh=video.videoHeight,P=q.map(p=>mapPt(p,vw,vh));
-    x.lineWidth=4;x.strokeStyle=color;x.fillStyle=color.replace("1)",".14)");x.beginPath();P.forEach((p,i)=>i?x.lineTo(p[0],p[1]):x.moveTo(p[0],p[1]));x.closePath();x.fill();x.stroke()}
+  function armIdle(){clearTimeout(idleT);idleT=setTimeout(()=>{if(run&&Date.now()-lastDet>=IDLE_MS)stop("Se apagó sola tras 2 min sin ver cartones (ahorro de batería).");else if(run)armIdle()},IDLE_MS)}
+  /* cada cuadro nuevo de la cámara → detección (sin cola: si el motor está ocupado, se salta el cuadro) */
+  function pump(){if(!run)return;if(video.requestVideoFrameCallback)video.requestVideoFrameCallback(onFrame);else setTimeout(onFrame,66)}
+  async function onFrame(){if(!run)return;if(inflight||reading||!video.videoWidth){pump();return}
+    inflight=true;try{const vw=video.videoWidth,vh=video.videoHeight,k=Math.min(1,640/Math.max(vw,vh));
+      const bmp=await createImageBitmap(video,{resizeWidth:Math.round(vw*k),resizeHeight:Math.round(vh*k),resizeQuality:"low"});
+      const r=await Eng.detect(bmp);st.frames++;st.ms+=r.ms;if(st.frames%300===0)stats();await handle(r)}
+    catch(e){Log.add("error","camara","CAM_LOOP","error en el ciclo de la cámara",{err:e})}
+    inflight=false;pump()}
   const center=q=>[(q[0][0]+q[1][0]+q[2][0]+q[3][0])/4,(q[0][1]+q[1][1]+q[2][1]+q[3][1])/4];
-  function loop(){if(!run)return;timer=setTimeout(tick,110)}
-  function tick(){try{
-    if(!run)return;if(busy||!video.videoWidth){loop();return}
-    const vw=video.videoWidth,vh=video.videoHeight,k=Math.min(1,640/Math.max(vw,vh));small.width=Math.round(vw*k);small.height=Math.round(vh*k);
-    small.getContext("2d",{willReadFrequently:true}).drawImage(video,0,0,small.width,small.height);
-    const t0=performance.now(),d=BSReader.detect(small,{maxSide:640})[0];st.frames++;st.ms+=performance.now()-t0;if(d){st.det++;st.lastDet=Date.now()}
-    if(st.frames%300===0)stats();
-    if(!d&&Date.now()-st.lastDet>15000&&Date.now()-st.warned>30000){st.warned=Date.now();Log.add("warn","camara","CAM_NO_DETECT","15 s con la cámara abierta sin encontrar un cartón",{res:[vw,vh]});Log.img(small,"cámara sin cartón",null)}
-    const W=small.width;
-    if(!d){hist=[];draw(null);if(locked){lostN++;if(lostN>=3){locked=false;fails=0}}if(!locked)say("Apunta al cartón (entero, con el nº de cartón arriba)");loop();return}
-    const q=d.corners;
-    if(locked){const c0=center(lockQuad),c1=center(q);if(Math.hypot(c0[0]-c1[0],c0[1]-c1[1])>W*.22){locked=false;fails=0}
-      else{lostN=0;draw(q,"rgba(46,204,113,1)");
-        // cambiaron el cartón sin sacarlo del encuadre: cada ~1,5 s se vuelve a leer y, si los números son otros, es un cartón nuevo
-        hist.push(q);if(hist.length>3)hist.shift();const stl=hist.length===3&&hist.every(h=>h.every((p,i)=>Math.hypot(p[0]-q[i][0],p[1]-q[i][1])<W*.012));
-        if(stl&&Date.now()-lockT>1500){lockT=Date.now();busy=true;setTimeout(()=>{try{const full=toCanvas(video,1920),fd=BSReader.detect(full)[0];
-            if(fd){const rd=readCard(full,fd.corners),fl=rd.grid.flat(),diff=fl.filter((v,i)=>v!==lockRows[i]).length;if(diff>=6&&rd.dub.length<=4){locked=false;busy=false;hist=[];capture(rd,q,full);return}}}catch(e){Log.add("error","lector","CAM_READ_FAIL","error al releer",{err:e})}busy=false;loop()},20);return}
-        loop();return}}
-    const bw=Math.hypot(q[1][0]-q[0][0],q[1][1]-q[0][1]);if(bw<W*.45){hist=[];draw(q,"rgba(255,167,38,1)");say("Acércate un poco más");loop();return}
-    hist.push(q);if(hist.length>3)hist.shift();
-    const still=hist.length===3&&hist.every(h=>h.every((p,i)=>Math.hypot(p[0]-q[i][0],p[1]-q[i][1])<W*.012));
-    draw(q,still?"rgba(46,204,113,1)":"rgba(255,204,51,1)");
-    if(!still){say("Quieto…");loop();return}
-    busy=true;say("Leyendo…");
-    setTimeout(async()=>{const end=Log.time();let full=null;try{
-      full=toCanvas(video,1920);const fd=BSReader.detect(full)[0];
-      if(!fd){busy=false;hist=[];loop();return}
-      const rd=readCard(full,fd.corners);
-      const nIss=Rules.checkGrid(rd.grid).errors.length;
-      if((rd.dub.length+nIss>4)&&fails<2){fails++;end("warn","camara","CAM_READ_RETRY",`lectura poco legible (intento ${fails}): ${rd.dub.length} dudas, ${nIss} reglas`,{doubts:rd.doubts,blacks:rd.blacks});
-        if(fails===2)Log.img(full,"lectura poco legible",null);say("No se leyó bien: mejora la luz o acércate","warn");hist=[];busy=false;loop();return}
-      end("info","camara","CAM_READ",`lectura en vivo (${rd.carton||"¿?"})`,{res:[full.width,full.height],dudas:rd.dub.length});
-      busy=false;await capture(rd,q,full);return;
-    }catch(e){say("Error al leer: "+e.message,"warn");Log.add("error","lector","CAM_READ_FAIL","error al leer en vivo",{err:e});if(full)Log.img(full,"error de lectura",null)}busy=false;loop()},30);
-  }catch(e){Log.add("error","camara","CAM_LOOP","error en el ciclo de la cámara",{err:e});busy=false;loop()}}
-  async function capture(rd,q,full){busy=true;try{
-      const s=await storeRead(rd,"cámara");showLast(s);locked=true;lockQuad=q;lockRows=rd.grid.flat();lockT=Date.now();lostN=0;fails=0;hist=[];
+  const still=(W)=>hist.length===3&&hist.every(h=>h.every((p,i)=>Math.hypot(p[0]-hist[2][i][0],p[1]-hist[2][i][1])<W*.012));
+  async function handle(r){if(!run)return;const q=r.q,W=r.w;lastWH=[r.w,r.h];
+    if(q){st.det++;lastDet=Date.now();lastQ=q}
+    else if(Date.now()-lastDet>15000&&Date.now()-st.warned>30000){st.warned=Date.now();Log.add("warn","camara","CAM_NO_DETECT","15 s con la cámara abierta sin encontrar un cartón",{res:[video.videoWidth,video.videoHeight]});try{Log.img(video,"cámara sin cartón",null)}catch(e){}}
+    if(!q){hist=[];draw(null);if(locked){lostN++;if(lostN>=3){locked=false;fails=0}}if(!locked)say("Encuadra el cartón entero, con el nº de cartón arriba");return}
+    if(locked){const c0=center(lockQ),c1=center(q);
+      if(Math.hypot(c0[0]-c1[0],c0[1]-c1[1])>W*.22){locked=false;fails=0}
+      else{lostN=0;hist.push(q);if(hist.length>3)hist.shift();draw(q,"done");
+        if(still(W)&&Date.now()-lockT>1500){lockT=Date.now();const rd=await grabRead();if(rd&&!rd.none){const fl=rd.grid.flat(),diff=fl.filter((v,i)=>v!==lockRows[i]).length;if(diff>=6&&rd.dub.length<=4){locked=false;hist=[];await capture(rd,q)}}}
+        return}}
+    const bw=Math.hypot(q[1][0]-q[0][0],q[1][1]-q[0][1]);if(bw<W*.45){hist=[];draw(q,"far");say("Acércate un poco más");return}
+    hist.push(q);if(hist.length>3)hist.shift();const ok=still(W);draw(q,ok?"ok":"hold",hist.length);
+    if(!ok){say("Quieto… "+"●".repeat(hist.length)+"○".repeat(3-hist.length));return}
+    say("Leyendo…");const rd=await grabRead();if(!run)return;
+    if(!rd||rd.none){hist=[];return}
+    const nIss=Rules.checkGrid(rd.grid).errors.length;
+    if((rd.dub.length+nIss>4)&&fails<2){fails++;Log.add("warn","camara","CAM_READ_RETRY",`lectura poco legible (intento ${fails}): ${rd.dub.length} dudas, ${nIss} reglas`,{doubts:rd.doubts,blacks:rd.blacks,res:rd.res,ms:rd.ms});
+      if(fails===2){try{Log.img(video,"lectura poco legible",null)}catch(e){}}say("No se leyó bien: más luz o acércate","warn");hist=[];return}
+    Log.add("info","camara","CAM_READ",`lectura en vivo (${rd.carton||"¿?"}) en ${rd.ms} ms`,{res:rd.res,dudas:rd.dub.length,motor:Eng.mode});
+    await capture(rd,q)}
+  /* foto a resolución completa del cuadro actual → lectura en segundo plano */
+  async function grabRead(){reading=true;try{const bmp=await createImageBitmap(video);return await Eng.read(bmp)}catch(e){Log.add("error","lector","CAM_READ_FAIL","error al leer en vivo",{err:e});return null}finally{reading=false}}
+  async function capture(rd,q){try{
+      const s=await storeRead(rd,"cámara");showLast(s);locked=true;lockQ=q;lockRows=rd.grid.flat();lockT=Date.now();lostN=0;fails=0;hist=[];
       if(s.kind==="dup"){say(`Cartón ${s.card.carton} ya estaba guardado`,"warn");buzz(40)}
-      else if(s.kind==="ok"){say(`✓ Cartón ${s.card.carton} guardado · ${S.cards.length} en total — pon el siguiente`,"good");beep([[1046,.07],[1568,.1]]);buzz(90)}
-      else{say(`⚠ Cartón ${s.card.carton||"¿?"} guardado para revisar — pon el siguiente`,"warn");beep([[660,.12]]);buzz([60,60,60]);if(full)Log.img(full,"por revisar "+(s.card.carton||""),null)}
-    }catch(e){say("Error al guardar: "+e.message,"warn");Log.add("error","datos","DB_ERROR","no se pudo guardar el cartón",{err:e})}busy=false;loop()}
+      else{cnt++;setCnt();
+        if(s.kind==="ok"){say(`✓ Cartón ${s.card.carton} guardado — pon el siguiente`,"good");beep([[1046,.07],[1568,.1]]);buzz(90)}
+        else{say(`⚠ Cartón ${s.card.carton||"¿?"} guardado para revisar — pon el siguiente`,"warn");beep([[660,.12]]);buzz([60,60,60])}}
+    }catch(e){say("Error al guardar: "+e.message,"warn");Log.add("error","datos","DB_ERROR","no se pudo guardar el cartón",{err:e})}}
+  /* dibujo sobre el video */
+  function mapPt(p){const vw=video.videoWidth,vh=video.videoHeight,W=ov.clientWidth,H=ov.clientHeight,k=(vw>vh?Math.min:Math.max)(W/vw,H/vh);return[(p[0]*vw/lastWH[0])*k+(W-vw*k)/2,(p[1]*vh/lastWH[1])*k+(H-vh*k)/2]}
+  function draw(q,kind,n){const x=ov.getContext("2d"),dpr=devicePixelRatio||1,W=ov.clientWidth,H=ov.clientHeight;if(ov.width!==Math.round(W*dpr)||ov.height!==Math.round(H*dpr)){ov.width=Math.round(W*dpr);ov.height=Math.round(H*dpr)}
+    x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,W,H);
+    if(!q){// guía: rectángulo con la forma del cartón
+      const gw=W*.9,gh=Math.min(H*.6,gw/1.75),gx=(W-gw)/2,gy=(H-gh)/2;x.setLineDash([10,8]);x.lineWidth=2;x.strokeStyle="rgba(255,255,255,.55)";x.strokeRect(gx,gy,gw,gh);x.setLineDash([]);
+      const L=22;x.lineWidth=4;x.strokeStyle="#ffcc33";[[gx,gy,1,1],[gx+gw,gy,-1,1],[gx+gw,gy+gh,-1,-1],[gx,gy+gh,1,-1]].forEach(([a,b,sx,sy])=>{x.beginPath();x.moveTo(a+sx*L,b);x.lineTo(a,b);x.lineTo(a,b+sy*L);x.stroke()});return}
+    const col={done:"46,204,113",ok:"46,204,113",hold:"255,204,51",far:"255,167,38"}[kind]||"255,204,51",P=q.map(mapPt);
+    x.lineWidth=4;x.lineJoin="round";x.strokeStyle=`rgba(${col},1)`;x.fillStyle=`rgba(${col},${kind==="done"?.10:.16})`;x.beginPath();P.forEach((p,i)=>i?x.lineTo(p[0],p[1]):x.moveTo(p[0],p[1]));x.closePath();x.fill();x.stroke();
+    if(kind==="hold"&&n){const c=[P.reduce((a,p)=>a+p[0],0)/4,P.reduce((a,p)=>a+p[1],0)/4];x.lineWidth=6;x.strokeStyle="rgba(255,255,255,.35)";x.beginPath();x.arc(c[0],c[1],22,0,Math.PI*2);x.stroke();x.strokeStyle=`rgba(${col},1)`;x.beginPath();x.arc(c[0],c[1],22,-Math.PI/2,-Math.PI/2+Math.PI*2*n/3);x.stroke()}
+    if(kind==="done"){const c=[P.reduce((a,p)=>a+p[0],0)/4,P.reduce((a,p)=>a+p[1],0)/4];x.fillStyle="rgba(46,204,113,.95)";x.beginPath();x.arc(c[0],c[1],24,0,Math.PI*2);x.fill();x.strokeStyle="#fff";x.lineWidth=5;x.beginPath();x.moveTo(c[0]-10,c[1]);x.lineTo(c[0]-2,c[1]+8);x.lineTo(c[0]+11,c[1]-8);x.stroke()}}
+  /* controles */
+  async function setTorch(){if(!track)return;torch=!torch;try{await track.applyConstraints({advanced:[{torch}]});$("#cTorch").classList.toggle("on",torch);Log.add("info","camara","TORCH",torch?"linterna encendida":"linterna apagada")}catch(e){torch=!torch;toast("Esta cámara no permite linterna");Log.add("warn","camara","TORCH","linterna no disponible",{err:e})}}
+  function showZoom(){if(zoom)$("#cZoomV").textContent=(zoom.v).toFixed(1).replace(/\.0$/,"")+"×"}
+  async function setZoom(dir){if(!track||!zoom)return;const nv=Math.max(zoom.min,Math.min(zoom.max,Math.round((zoom.v+dir*.5)/zoom.step)*zoom.step));try{await track.applyConstraints({advanced:[{zoom:nv}]});zoom.v=nv;showZoom();hist=[]}catch(e){Log.add("warn","camara","ZOOM","no se pudo cambiar el zoom",{err:e})}}
+  async function focusAt(ev){if(!track)return;const r=ov.getBoundingClientRect(),fx=(ev.clientX-r.left)/r.width,fy=(ev.clientY-r.top)/r.height;
+    const ring=$("#focusRing");ring.style.left=(ev.clientX-r.left)+"px";ring.style.top=(ev.clientY-r.top)+"px";ring.classList.remove("on");void ring.offsetWidth;ring.classList.add("on");
+    try{const cap=track.getCapabilities?track.getCapabilities():{};const adv={};if(cap.focusMode&&cap.focusMode.includes("single-shot"))adv.focusMode="single-shot";adv.pointsOfInterest=[{x:fx,y:fy}];await track.applyConstraints({advanced:[adv]});
+      setTimeout(()=>{if(track&&cap.focusMode&&cap.focusMode.includes("continuous"))track.applyConstraints({advanced:[{focusMode:"continuous"}]}).catch(()=>{})},1500)}catch(e){}}
   async function group(){
-    if(!track)return;busy=true;say("Tomando foto de grupo…");
+    if(!track)return;reading=true;say("Tomando foto de grupo…");
     try{let img=null,how="video";if(window.ImageCapture){try{const ic=new ImageCapture(track);const blob=await ic.takePhoto();img=await createImageBitmap(blob);how="takePhoto"}catch(e){Log.add("warn","camara","GROUP_PHOTO","takePhoto falló; uso el cuadro del video",{err:e})}}
       const c=img?toCanvas(img,3200):toCanvas(video);Log.add("info","galeria","GROUP",`foto de grupo ${c.width}×${c.height} (${how})`);
       await importItems([{name:"Foto de grupo",canvas:c,meta:{how},steps:[]}],"Foto de grupo");say("Listo. Apunta al siguiente cartón o toma otra foto");
-    }catch(e){say("Error: "+e.message,"warn");Log.add("error","galeria","GAL_READ_FAIL","error en foto de grupo",{err:e})}busy=false;locked=false;hist=[]}
-  async function setTorch(){if(!track)return;torch=!torch;try{await track.applyConstraints({advanced:[{torch}]});$("#tTorch").classList.toggle("pri",torch);Log.add("info","camara","TORCH",torch?"linterna encendida":"linterna apagada")}catch(e){toast("Esta cámara no permite linterna");Log.add("warn","camara","TORCH","linterna no disponible",{err:e})}}
-  return{start,stop,group,setTorch}})();
-$("#camStart").onclick=()=>Cam.start();$("#tGroup").onclick=()=>Cam.group();$("#tTorch").onclick=()=>Cam.setTorch();
+    }catch(e){say("Error: "+e.message,"warn");Log.add("error","galeria","GAL_READ_FAIL","error en foto de grupo",{err:e})}reading=false;locked=false;hist=[]}
+  ov.addEventListener("click",focusAt);
+  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden"&&run)stop("La cámara se apagó al salir de la app. Toca para encenderla otra vez.")});
+  return{start,stop,group,setTorch,setZoom,get on(){return run}}})();
+$("#camStart").onclick=()=>Cam.start();$("#tGroup").onclick=()=>Cam.group();
+$("#cOff").onclick=()=>Cam.stop("usuario");$("#cTorch").onclick=()=>Cam.setTorch();$("#cZm").onclick=()=>Cam.setZoom(-1);$("#cZp").onclick=()=>Cam.setZoom(1);
 $("#tFiles").onchange=async e=>{const fs=[...e.target.files];e.target.value="";if(!fs.length){Log.add("info","galeria","GAL_CANCEL","selección de galería cancelada");return}
   Log.add("info","galeria","GAL_PICK",`${fs.length} foto(s) elegidas`,{files:fs.map(f=>({name:f.name,type:f.type,kb:Math.round(f.size/1024)}))});
   toast(`Abriendo ${fs.length} foto(s)…`,8000);const items=[];
@@ -410,7 +447,7 @@ $("#playWarn").onclick=()=>{S.filter="review";go("cards")};
 
 /* ================= arranque ================= */
 (async()=>{
-  try{const t=await (await fetch("tpl.json")).json();BSReader.setTemplates(t);const extra=await DB.getMeta("userTpl");if(extra)BSReader.addTemplates(extra);Log.add("info","lector","TPL",`plantillas cargadas: ${BSReader.templates}`)}
+  try{const t=await (await fetch("tpl.json")).json();BSReader.setTemplates(t);const extra=await DB.getMeta("userTpl");if(extra)BSReader.addTemplates(extra);Eng.init(t,extra||null);Log.add("info","lector","TPL",`plantillas cargadas: ${BSReader.templates}`)}
   catch(e){toast("No se cargaron las plantillas del lector");Log.add("error","lector","TPL_FAIL","no se cargaron las plantillas del lector",{err:e})}
   try{await loadAll()}catch(e){Log.add("error","datos","DB_ERROR","no se pudieron cargar los datos",{err:e})}
   renderAll();go(S.game?(S.cards.length?"play":"scan"):"games");

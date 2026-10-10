@@ -7,11 +7,13 @@ const BSReader=(function(){
 const GW=900,GH=330,CW=GW/9,CH=GH/3,HEAD=82; // rejilla normalizada + franja superior (cartón y serie)
 const TW=16,THh=24; // tamaño de plantilla
 let TPL=[]; // {d, v:Float32Array, ar}
+/* lienzo que funciona en la página y dentro de un Worker (OffscreenCanvas) */
+const mkCanvas=(w,h)=>{if(typeof document!=="undefined"){const c=document.createElement("canvas");c.width=w;c.height=h;return c}return new OffscreenCanvas(w,h)};
 
 /* ---------- utilidades de imagen ---------- */
 function grayOf(src,maxSide){
   const s=Math.min(1,maxSide/Math.max(src.width,src.height)),w=Math.max(1,Math.round(src.width*s)),h=Math.max(1,Math.round(src.height*s));
-  const c=document.createElement("canvas");c.width=w;c.height=h;const x=c.getContext("2d",{willReadFrequently:true});x.drawImage(src,0,0,w,h);
+  const c=mkCanvas(w,h);const x=c.getContext("2d",{willReadFrequently:true});x.drawImage(src,0,0,w,h);
   const d=x.getImageData(0,0,w,h).data,g=new Uint8ClampedArray(w*h),red=new Uint8Array(w*h);
   for(let i=0,j=0;j<w*h;i+=4,j++){g[j]=(d[i]*77+d[i+1]*150+d[i+2]*29)>>8;red[j]=d[i]-Math.max(d[i+1],d[i+2])>50?1:0}
   return{g,w,h,s,red,canvas:c};
@@ -94,7 +96,7 @@ function scores(gl){const sc=new Array(10).fill(-1);for(const t of TPL){const s=
 function best(sc,allowed){let d=-1,b=-9,b2=-9;for(let i=0;i<10;i++){if(allowed&&!allowed.includes(i))continue;if(sc[i]>b){b2=b;b=sc[i];d=i}else if(sc[i]>b2)b2=sc[i]}return{d,s:b,m:b-b2}}
 /* plantillas: se dibujan con varias tipografías condensadas (parecidas a la del cartón) + muestras reales */
 function buildTemplates(fonts,real){
-  TPL=[];const c=document.createElement("canvas");c.width=80;c.height=90;const x=c.getContext("2d",{willReadFrequently:true});
+  TPL=[];const c=mkCanvas(80,90);const x=c.getContext("2d",{willReadFrequently:true});
   for(const f of fonts)for(let d=0;d<10;d++){x.fillStyle="#fff";x.fillRect(0,0,80,90);x.fillStyle="#000";x.font=f;x.textBaseline="middle";x.textAlign="center";x.fillText(String(d),40,46);
     const id=x.getImageData(0,0,80,90).data,bin=new Uint8Array(80*90);let x0=80,x1=-1,y0=90,y1=-1;
     for(let i=0;i<80*90;i++){const on=id[i*4]<128?1:0;bin[i]=on;if(on){const xx=i%80,yy=(i/80)|0;if(xx<x0)x0=xx;if(xx>x1)x1=xx;if(yy<y0)y0=yy;if(yy>y1)y1=yy}}
@@ -191,7 +193,7 @@ function readGrid(src,corners,rot){
   for(let y=0;y<HEAD;y++){const Y=Math.round(topY-hh+(y+.5)*hh/HEAD);for(let x=0;x<GW;x++){const X=Math.round(fx[0]-fx[1]/2+(x+.5)*(fx[1]*9)/GW);head[y*GW+x]=X<0||Y<0||X>=BW||Y>=BH?255:big[Y*BW+X]}}
   const hd=readHeader(head);
   // miniatura (rejilla ajustada)
-  const gx0=fx[0]-fx[1]/2,gy0=topY-hh,gw=fx[1]*9,gh=fy[1]*3+hh,th=document.createElement("canvas");th.width=480;th.height=Math.round(480*gh/gw);
+  const gx0=fx[0]-fx[1]/2,gy0=topY-hh,gw=fx[1]*9,gh=fy[1]*3+hh,th=mkCanvas(480,Math.max(1,Math.round(480*gh/gw)));
   const id=th.getContext("2d").createImageData(th.width,th.height);for(let y=0;y<th.height;y++)for(let x=0;x<th.width;x++){const X=Math.round(gx0+x*gw/th.width),Y=Math.round(gy0+y*gh/th.height),v=X<0||Y<0||X>=BW||Y>=BH?255:big[Y*BW+X],i=(y*th.width+x)*4;id.data[i]=id.data[i+1]=id.data[i+2]=v;id.data[i+3]=255}
   th.getContext("2d").putImageData(id,0,0);
   return{rows:nums.map(r=>r.map(n=>n.v)),cells:nums,doubts,carton:hd.carton,serie:hd.serie,headConf:hd.conf,cartonConf:hd.cconf,thumb:th,blacks:blk.length,_dbg:dbg,_blk:blk.map(b=>[b.r,b.c,Math.round(b.cx),Math.round(b.cy),b.bw,b.bh]),_fit:[fx,fy]};
@@ -213,5 +215,15 @@ function sharpness(src){const G=grayOf(src,480),{g,w,h}=G;let s=0,s2=0,n=0;for(l
 function setTemplates(list){TPL=list.map(t=>({d:t.d,v:Float32Array.from(t.q,ch=>parseInt(ch,16)/15),ar:t.ar,src:t.s||"pre"}))}
 function addTemplates(list){for(const t of list)TPL.push({d:t.d,v:Float32Array.from(t.q,ch=>parseInt(ch,16)/15),ar:t.ar,src:"user"})}
 function exportTemplates(){return TPL.map(t=>({d:t.d,q:Array.from(t.v,x=>Math.round(x*15).toString(16)).join(""),ar:+t.ar.toFixed(4),s:t.src==="real"?"r":"f"}))}
-return{detect,readGrid,buildTemplates,setTemplates,addTemplates,exportTemplates,sharpness,get templates(){return TPL.length},_glyphVec:glyphVec};
+/* lectura completa de un cartón ya localizado → cuadrícula 3×9 (número | -1 sin leer | null negra) + dudas */
+function readCard(img,corners){
+  let r=readGrid(img,corners,0),rot=0;
+  if(r.doubts.length>2){const r2=readGrid(img,corners,1);if(r2.doubts.length<r.doubts.length){r=r2;rot=180}}
+  const grid=[...Array(3)].map(()=>Array(9).fill(null)),dub=[];
+  r.cells.forEach((row,ri)=>row.forEach(n=>{const i=ri*9+n.c;grid[ri][n.c]=n.v==null?-1:n.v;if(n.v==null||n.conf<.08||n.why)dub.push(i)}));
+  const p4=s=>{s=String(s||"").replace(/\D/g,"");return s?s.padStart(4,"0").slice(-4):""};
+  const carton=/^\d{1,4}$/.test(r.carton)?p4(r.carton):"";if(carton&&r.cartonConf<.05)dub.push(-1);
+  return{carton,serieRead:p4(r.serie),grid,dub,rot,blacks:r.blacks,cartonConf:+(r.cartonConf||0).toFixed(3),doubts:r.doubts.map(d=>d.why),thumbCanvas:r.thumb};
+}
+return{detect,readGrid,readCard,buildTemplates,setTemplates,addTemplates,exportTemplates,sharpness,get templates(){return TPL.length},_glyphVec:glyphVec};
 })();
