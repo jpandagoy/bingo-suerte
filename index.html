@@ -14,6 +14,7 @@
 :root{--bg:#0f1b2d;--bg2:#16263d;--card:#1c2f4a;--line:#2b4466;--tx:#eef3fa;--mut:#9fb2cc;--acc:#ffcc33;--ok:#2ecc71;--warn:#ffa726;--bad:#ff5252;--red:#e53935;--ball:#22c55e;--hot:#ff9800;
   --r:14px;--safe-b:env(safe-area-inset-bottom,0px)}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);font:15px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overscroll-behavior:none}
 body{display:flex;flex-direction:column}
 button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
@@ -72,7 +73,6 @@ nav.tabs .badge{position:absolute;top:4px;left:calc(50% + 8px);background:var(--
 .toolbar .btn{flex:1;min-width:0;padding:10px 8px;font-size:13.5px}
 #lastScan .cardbox{margin:0}
 /* ---------- jugar ---------- */
-#playTop{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 0 8px;margin:-14px 0 6px}
 .phase{display:flex;gap:6px;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:4px}
 .phase button{flex:1;padding:9px 6px;border-radius:9px;font-weight:700;font-size:13.5px;color:var(--mut)}
 .phase button.on{background:var(--acc);color:#1a1300}
@@ -83,7 +83,6 @@ nav.tabs .badge{position:absolute;top:4px;left:calc(50% + 8px);background:var(--
 .prev span{min-width:32px;height:32px;border-radius:50%;background:var(--card);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13.5px}
 .cnt{font-size:12px;color:var(--mut);text-align:right;line-height:1.25}
 .cnt b{font-size:18px;color:var(--tx);display:block}
-#board{display:grid;grid-template-columns:repeat(10,1fr);gap:4px;user-select:none}
 #board button{aspect-ratio:1/1;border-radius:9px;background:var(--card);border:1px solid var(--line);font-weight:800;font-size:16px;font-variant-numeric:tabular-nums;padding:0;position:relative}
 #board button.ph{visibility:hidden}
 #board button.on{background:var(--ball);border-color:var(--ball);color:#fff}
@@ -199,6 +198,41 @@ nav.tabs .badge.bad{background:var(--bad);color:#fff}
 .cacts .btn.ok{flex:1.4;font-size:15px}
 .cacts .btn.off{background:#2a1a1d;border-color:#5a2a33;color:#ff8a80;font-size:13px}
 #board button{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;touch-action:manipulation}
+
+/* ---------- JUGAR · tablero grande con lupa ---------- */
+#v-play.on{display:flex;flex-direction:column;height:100%;padding:8px 10px calc(68px + var(--safe-b));overflow:hidden;position:relative;gap:6px}
+.ptop{display:flex;align-items:center;gap:8px}
+.ptop .bigball{width:54px;height:54px;font-size:25px}
+.pmid{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
+.ptop .phase{padding:3px}.ptop .phase button{padding:6px 4px;font-size:12.5px}
+.ptop .prev{gap:4px}.ptop .prev span{min-width:26px;height:26px;font-size:12px}
+.pact{display:flex;gap:6px}
+.pact .btn{flex:1;min-height:38px;padding:6px 8px;font-size:13px}
+#bUndo{color:var(--acc)}#bUndo.armed{background:var(--bad);border-color:var(--bad);color:#fff}
+#bUndo:disabled{opacity:.4}
+.pact .pwarn{flex:1.1;margin:0;padding:6px 8px;font-size:12.5px;border-radius:10px}
+#board{flex:1;min-height:0;display:grid;grid-template-columns:repeat(9,1fr);grid-template-rows:14px repeat(11,minmax(0,1fr));gap:3px;position:relative;touch-action:none;user-select:none;-webkit-user-select:none}
+#board .bh{font-size:10px;color:var(--mut);text-align:center;font-weight:600;line-height:14px}
+#board button{aspect-ratio:auto;min-height:0;border-radius:8px;background:var(--card);border:1px solid var(--line);font-weight:800;font-size:17px;font-variant-numeric:tabular-nums;padding:0}
+#board button.pv{background:#fff;color:#000}
+.loupe{position:absolute;width:78px;height:78px;border-radius:50% 50% 50% 10px;background:var(--acc);color:#1a1300;font-weight:900;font-size:38px;line-height:78px;text-align:center;pointer-events:none;display:none;box-shadow:0 6px 18px rgba(0,0,0,.55);z-index:7}
+.loupe.on{display:block}.loupe.dup{background:#3b4a63;color:#cfd8e6}
+.psheetbg{position:absolute;inset:0;background:rgba(3,8,16,.55);z-index:7}
+.psheet{flex:none;background:var(--bg2);border:1px solid var(--line);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;z-index:8}
+.psheet.open{position:absolute;left:8px;right:8px;top:18%;bottom:calc(68px + var(--safe-b))}
+.pgrab{display:flex;align-items:center;gap:8px;padding:10px 12px;text-align:left;width:100%;min-height:46px}
+.psum{flex:1;min-width:0;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.psum .o{color:var(--hot)}.psum .w{color:#4ade80}
+.pgrab b{color:var(--acc);font-size:13px;white-space:nowrap}
+.pcards{display:none;overflow:auto;padding:0 10px 12px;gap:8px;flex-direction:column}
+.psheet.open .pcards{display:flex}
+.pcards h3{font-size:13px;margin:4px 0 2px;color:var(--mut)}
+.pcard{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px}
+.pcard.one{border-color:var(--hot)}.pcard.win{border-color:var(--ok)}
+.pch{display:flex;align-items:baseline;gap:8px;margin-bottom:6px;font-size:13px}.pch b{font-size:15px}.pch .ser{color:#ff6b6b;font-weight:700}
+.pch .pk{margin-left:auto;font-weight:700;color:var(--hot)}.pcard.win .pk{color:#4ade80}
+.dlgacts{justify-content:flex-end;margin-top:14px}
+.rlist{margin:6px 0 10px;padding-left:20px;display:grid;gap:4px}
 </style>
 </head>
 <body>
@@ -267,17 +301,18 @@ nav.tabs .badge.bad{background:var(--bad);color:#fff}
 
   <!-- JUGAR -->
   <section class="view" id="v-play">
-    <div id="playTop">
-      <div class="phase" id="phase"><button data-p="linea">1 · Línea</button><button data-p="full">2 · Tabla llena</button></div>
-      <div class="lastline">
-        <div class="bigball empty" id="bigBall">—</div>
+    <div class="ptop">
+      <div class="bigball empty" id="bigBall">—</div>
+      <div class="pmid">
+        <div class="phase" id="phase"><button data-p="linea">1 · Línea</button><button data-p="full">2 · Tabla llena</button></div>
         <div class="prev" id="prevBalls"></div>
-        <div class="cnt"><b id="ballCnt">0</b>de 90</div>
       </div>
+      <div class="cnt"><b id="ballCnt">0</b>de 90</div>
     </div>
-    <div class="pwarn" id="playWarn" hidden></div>
+    <div class="pact"><button class="btn sm" id="bUndo">↶ Quitar última</button><button class="btn sm pwarn" id="playWarn" hidden></button><button class="btn sm" id="bMore">⋯ Más</button></div>
     <div id="board"></div>
-    <div class="near" id="near"></div>
+    <div class="psheetbg" id="psheetBg" hidden></div>
+    <div class="psheet" id="psheet"><button class="pgrab" id="pgrab"><span id="pSum" class="psum"></span><b id="pTog">Ver ▲</b></button><div class="pcards" id="near"></div></div>
   </section>
 </main>
 
@@ -291,9 +326,8 @@ nav.tabs .badge.bad{background:var(--bad);color:#fff}
 
 <div id="alert"><div class="t" id="aT">¡LÍNEA!</div><div class="who" id="aWho"></div><div id="aCard"></div><div class="mut" id="aMore"></div><div class="acts" id="aActs"></div></div>
 <div class="toast" id="toast"></div>
-<dialog id="dlg"></dialog>
 
-<script>const APPV="bds-1.3";</script>
+<script>const APPV="bds-1.4";</script>
 <script src="log.js"></script>
 <script src="rules.js"></script>
 <script src="reader.js"></script>

@@ -56,8 +56,12 @@ const buzz=p=>{try{navigator.vibrate&&navigator.vibrate(p)}catch(e){}};
 let wake=null;async function keepAwake(on){try{if(on&&!wake&&navigator.wakeLock){wake=await navigator.wakeLock.request("screen");wake.addEventListener("release",()=>{wake=null})}else if(!on&&wake){await wake.release();wake=null}}catch(e){}}
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&(S.view==="play"||S.view==="scan"))keepAwake(true)});
 const SINK='<div class="fsink" tabindex="-1" autofocus></div>'; // el modal enfoca esto, no un campo → no se abre el teclado solo
-function ask(html,buttons){return new Promise(res=>{const d=$("#dlg");d.innerHTML=SINK+html+`<div class="row" style="justify-content:flex-end;margin-top:14px">${buttons.map((b,i)=>`<button class="btn sm ${b.cls||""}" data-i="${i}">${esc(b.t)}</button>`).join("")}</div>`;
-  d.querySelectorAll("[data-i]").forEach(b=>b.onclick=()=>{const v=buttons[+b.dataset.i].v;const f=d.querySelector("input");d.close();res(v==="__input"?(f?f.value:""):v)});d.onclose=()=>res(null);d.showModal()})}
+/* cada modal es un <dialog> nuevo: así el cierre de uno nunca cancela el siguiente (bug de «Reiniciar» en v1.3) */
+function openDlg(html,onClose){const d=document.createElement("dialog");d.className="dlg";d.innerHTML=SINK+html;document.body.appendChild(d);
+  d.addEventListener("close",()=>{try{onClose&&onClose()}finally{setTimeout(()=>d.remove(),0)}});d.showModal();return d}
+function ask(html,buttons){return new Promise(res=>{let done=false;const fin=v=>{if(!done){done=true;res(v)}};
+  const d=openDlg(html+`<div class="row dlgacts">${buttons.map((b,i)=>`<button class="btn sm ${b.cls||""}" data-i="${i}">${esc(b.t)}</button>`).join("")}</div>`,()=>fin(null));
+  d.querySelectorAll("[data-i]").forEach(b=>b.onclick=()=>{const v=buttons[+b.dataset.i].v,f=d.querySelector("input");fin(v==="__input"?(f?f.value:""):v);d.close()})})}
 
 /* miniatura 3×9 de un cartón */
 function miniHTML(card,opts){opts=opts||{};const C=opts.called||new Set(),need=opts.need||new Set(),dub=new Set(card.dub||[]),bad=new Set(card.bad||[]);let h='<div class="mini">';
@@ -342,15 +346,15 @@ $("#cAdd").onclick=()=>editCard(null);
 function editCard(card){
   const isNew=!card;card=card||normalizeCard({id:uid(),gameId:S.game.id,carton:"",serie:S.game.serie||"",rows:[[],[],[]],thumb:"",created:Date.now(),status:"review"});
   Log.add("info","editor","OPEN",isNew?"alta manual de cartón":`editar cartón ${card.carton}`,{id:card.id,status:card.status});
-  const d=$("#dlg"),dub=new Set(card.dub||[]),G=card.grid;let cells="";
+  const dub=new Set(card.dub||[]),G=card.grid;let cells="";
   const heads=["1–9","10","20","30","40","50","60","70","80–90"].map(h=>`<div class="eh">${h}</div>`).join("");
   for(let r=0;r<3;r++)for(let c=0;c<9;c++){const v=G[r][c],i=r*9+c;cells+=`<input inputmode="numeric" pattern="[0-9]*" maxlength="2" autocomplete="off" data-i="${i}" data-r="${r}" data-c="${c}" value="${v==null||v===-1?"":v}" placeholder="${v===-1?"?":""}" class="${v==null?"blk":dub.has(i)||v===-1?"dub":""}">`}
-  d.innerHTML=SINK+`<h2 style="margin:0 0 10px">${isNew?"Agregar cartón":"Cartón "+esc(card.carton||"¿?")}</h2>
+  const d=openDlg(`<h2 style="margin:0 0 10px">${isNew?"Agregar cartón":"Cartón "+esc(card.carton||"¿?")}</h2>
     ${card.thumb?`<img class="thumb" src="${card.thumb}" alt="foto del cartón">`:""}
     <div class="row" style="margin-top:10px"><div class="field grow" style="margin:0"><label>Nº de cartón</label><input id="eC" inputmode="numeric" maxlength="4" value="${esc(card.carton)}"></div><div class="field grow" style="margin:0"><label>Serie</label><input id="eS" inputmode="numeric" maxlength="4" value="${esc(card.serie)}"></div></div>
     <p class="mut small" style="margin:10px 0 4px">Cada columna es una decena. 5 números por fila, 15 en total, sin repetir, del 1 al 90. Amarillo = el lector dudó.</p>
     <div class="edgrid">${heads}${cells}</div><div id="eRows" class="erows"></div><div class="msgs bad" id="eM"></div><div class="msgs" id="eW"></div>
-    <div class="row" style="margin-top:6px">${isNew?"":'<button class="btn sm bad" id="eDel">Borrar</button>'}<span class="grow"></span><button class="btn sm" id="eX">Cancelar</button><button class="btn sm ok" id="eOk">Guardar ✓</button></div>`;
+    <div class="row" style="margin-top:6px">${isNew?"":'<button class="btn sm bad" id="eDel">Borrar</button>'}<span class="grow"></span><button class="btn sm" id="eX">Cancelar</button><button class="btn sm ok" id="eOk">Guardar ✓</button></div>`);
   const ins=[...d.querySelectorAll(".edgrid input")],eC=d.querySelector("#eC"),eS=d.querySelector("#eS"),ok=d.querySelector("#eOk");
   let last=null,warnOk=false;
   const gridNow=()=>{const g=[...Array(3)].map(()=>Array(9).fill(null));ins.forEach(i=>{if(i.value!=="")g[+i.dataset.r][+i.dataset.c]=i.value});return g};
@@ -385,91 +389,118 @@ function editCard(card){
     try{await DB.put("cards",card)}catch(e){toast("No se pudo guardar");return}
     if(isNew)S.cards.push(card);Log.add("info","editor","SAVE",`cartón ${card.carton} ${isNew?"agregado":"corregido"} (${card.status})`,{id:card.id,warns:card.warns});
     d.close();toast(`Cartón ${card.carton} guardado`);renderAll()};
-  d.onclose=null;d.showModal();validate();
+  validate();
 }
 
-/* ================= JUGAR ================= */
+/* ================= JUGAR (propuesta B: tablero grande con lupa) =================
+   · 90 casillas en columnas por decena, como el cartón. Se marca AL SOLTAR; la lupa muestra qué se marcará y se corrige deslizando.
+   · Una bolilla marcada nunca se desmarca con un toque. Quitarla: mantener presionado + confirmar, o "Quitar última" (2 toques).
+   · Panel inferior de cartones: resumen fijo + mini cartones con lo que falta. */
 /* una fila solo cuenta para LÍNEA si tiene sus 5 números válidos; TABLA LLENA exige los 15 */
 function evalCards(){const C=called(),out=[];
   for(const c of S.cards){const miss=c.rows.map(r=>r.filter(v=>!C.has(v)));const full=c.rows.map(r=>r.length===5);
     const lens=miss.map((m,i)=>full[i]?m.length:99);const best=Math.min(...lens);const total=c.rows.flat().length===15?miss.reduce((a,m)=>a+m.length,0):99;
     out.push({c,miss,best,bestRow:lens.indexOf(best),total,complete:c.rows.flat().length===15})}
   return out}
-function buildBoard(){const B=$("#board");let h="";
-  for(let t=0;t<9;t++)for(let u=0;u<10;u++){const v=t*10+u;h+=v===0?'<button class="ph" tabindex="-1"></button>':`<button data-n="${v}">${v}</button>`}
-  h+='<button data-n="90">90</button><button class="util undo" id="bUndo" style="grid-column:span 5">↶ Deshacer</button><button class="util" id="bMore" style="grid-column:span 4">Más…</button>';
+const P={drag:false,cur:null,lpT:null,lpFired:false,undoArm:null,sheet:false};
+function buildBoard(){const B=$("#board");let h='<div class="loupe" id="loupe"></div>';const heads=["1–9","10","20","30","40","50","60","70","80"];
+  for(let c=0;c<9;c++){h+=`<div class="bh" style="grid-column:${c+1};grid-row:1">${heads[c]}</div>`;
+    for(let u=0;u<10;u++){const v=c*10+u;if(v===0)continue;h+=`<button data-n="${v}" style="grid-column:${c+1};grid-row:${u+2}" aria-label="Bolilla ${v}">${v}</button>`}}
+  h+='<button data-n="90" style="grid-column:9;grid-row:12" aria-label="Bolilla 90">90</button>';
   B.innerHTML=h;
-  let lp=null;
-  B.onpointerdown=e=>{const b=e.target.closest("button[data-n].on");if(!b)return;clearTimeout(lp);lp=setTimeout(()=>{lp="fired";buzz(40);removeBall(+b.dataset.n)},650)};
-  const cancel=()=>{if(lp&&lp!=="fired"){clearTimeout(lp);lp=null}};B.onpointerup=cancel;B.onpointercancel=cancel;B.onpointerleave=cancel;
-  B.oncontextmenu=e=>e.preventDefault();
-  B.onclick=e=>{const b=e.target.closest("button[data-n]");if(!b)return;if(lp==="fired"){lp=null;return}markBall(+b.dataset.n)};
-  $("#bUndo").onclick=()=>{const g=S.game;if(!g.draws.length)return;const v=g.draws.pop();Log.add("info","juego","UNDO",`deshacer bola ${v}`,{n:g.draws.length});afterChange();toast("Quitada la bola "+v)};
-  $("#bMore").onclick=moreMenu;
-  $$("#phase button").forEach(b=>b.onclick=()=>{S.game.phase=b.dataset.p;Log.add("info","juego","PHASE","fase: "+b.dataset.p);saveGame();render.play()});
+  const at=(x,y)=>{const el=document.elementFromPoint(x,y);const b=el&&el.closest?el.closest("#board button[data-n]"):null;return b};
+  const loupe=$("#loupe");
+  function show(b){B.querySelectorAll(".pv").forEach(x=>x.classList.remove("pv"));if(!b){loupe.classList.remove("on");return}
+    const r=b.getBoundingClientRect(),R=B.getBoundingClientRect(),v=+b.dataset.n,dup=S.game.draws.includes(v);loupe.textContent=v;loupe.classList.add("on");loupe.classList.toggle("dup",dup);
+    loupe.style.left=Math.min(R.width-78,Math.max(0,r.left-R.left+r.width/2-39))+"px";loupe.style.top=(r.top-R.top-86<0?r.bottom-R.top+8:r.top-R.top-86)+"px";if(!dup)b.classList.add("pv")}
+  const reset=()=>{clearTimeout(P.lpT);P.drag=false;P.cur=null;show(null)};
+  B.onpointerdown=e=>{const b=at(e.clientX,e.clientY);if(!b)return;e.preventDefault();try{B.setPointerCapture(e.pointerId)}catch(_){}
+    P.drag=true;P.cur=b;P.lpFired=false;show(b);clearTimeout(P.lpT);
+    const v=+b.dataset.n;if(S.game.draws.includes(v))P.lpT=setTimeout(()=>{P.lpFired=true;reset();buzz(40);removeBall(v)},650)};
+  B.onpointermove=e=>{if(!P.drag)return;const b=at(e.clientX,e.clientY);if(b&&b!==P.cur){clearTimeout(P.lpT);P.cur=b;show(b)}};// entre casillas se conserva la última
+  B.onpointerup=()=>{clearTimeout(P.lpT);if(!P.drag)return;const b=P.cur;reset();if(!b||P.lpFired)return;markBall(+b.dataset.n)};
+  B.onpointercancel=reset;B.oncontextmenu=e=>e.preventDefault();
+  B.onclick=e=>{if(e.detail!==0)return;const b=e.target.closest("button[data-n]");if(b)markBall(+b.dataset.n)};// teclado / lector de pantalla
+  $("#bUndo").onclick=undoLast;$("#bMore").onclick=moreMenu;
+  $$("#phase button").forEach(b=>b.onclick=()=>{if(S.game.phase===b.dataset.p)return;S.game.phase=b.dataset.p;Log.add("info","juego","PHASE","fase: "+b.dataset.p);saveGame();render.play()});
+  $("#pgrab").onclick=()=>{P.sheet=!P.sheet;render.play()};
+  $("#psheetBg").onclick=()=>{P.sheet=false;render.play()};
 }
 function markBall(v){const g=S.game;
-  if(g.draws.includes(v)){Log.add("info","juego","BALL_AGAIN",`toque sobre ${v} ya marcada (no se desmarca)`);toast(`${v} ya está marcada. Para quitarla: mantén presionado o usa Deshacer`);buzz([30,40,30]);return}
+  if(g.draws.includes(v)){Log.add("info","juego","BALL_AGAIN",`toque sobre ${v} ya marcada (no se desmarca)`);toast(`${v} ya está marcada · para quitarla mantén presionado`);buzz([30,40,30]);return}
   const bad=Rules.checkBall(v,g.draws);if(bad){Log.add("warn","reglas","BALL_REJECT",bad.msg,{code:bad.code});toast(bad.msg);return}
-  g.draws.push(v);Log.add("info","juego","BALL",`bola ${v}`,{n:g.draws.length});afterChange(v)}
+  disarmUndo();g.draws.push(v);Log.add("info","juego","BALL",`bola ${v}`,{n:g.draws.length});buzz(15);afterChange(v)}
+/* "Quitar última": primer toque arma (muestra cuál), segundo toque la quita. Evita borrar por un roce. */
+function disarmUndo(){clearTimeout(P.undoArm);P.undoArm=null;const b=$("#bUndo");if(b)b.classList.remove("armed");renderUndo()}
+function renderUndo(){const b=$("#bUndo"),g=S.game;if(!b||!g)return;const l=g.draws[g.draws.length-1];b.disabled=l==null;b.textContent=P.undoArm?`¿Quitar ${l}? Toca otra vez`:l!=null?`↶ Quitar última (${l})`:"↶ Quitar última"}
+function undoLast(){const g=S.game;if(!g.draws.length)return;
+  if(!P.undoArm){P.undoArm=setTimeout(disarmUndo,3000);$("#bUndo").classList.add("armed");renderUndo();return}
+  disarmUndo();const v=g.draws.pop();Log.add("warn","juego","UNDO",`quitada la última bola (${v})`,{n:g.draws.length});toast("Quitada la bola "+v);afterChange()}
 async function removeBall(v){const g=S.game;if(!g.draws.includes(v))return;
-  if(await ask(`<h2 style="margin-top:0">¿Quitar la bola ${v}?</h2><p class="mut">Solo hazlo si la marcaste por error. Afecta a todos los cartones.</p>`,[{t:"No, dejarla",v:false},{t:`Quitar ${v}`,v:true,cls:"bad"}])!==true){Log.add("info","juego","UNMARK_CANCEL",`se canceló quitar ${v}`);return}
-  g.draws.splice(g.draws.indexOf(v),1);Log.add("warn","juego","UNMARK",`bola ${v} quitada (mantener presionado + confirmar)`,{n:g.draws.length});toast(`Bola ${v} quitada`);afterChange()}
+  if(await ask(`<h2 style="margin-top:0">¿Quitar la bolilla ${v}?</h2><p class="mut">Solo si la marcaste por error. Afecta a todos los cartones.</p>`,[{t:"No, dejarla",v:false},{t:`Quitar ${v}`,v:true,cls:"bad"}])!==true){Log.add("info","juego","UNMARK_CANCEL",`se canceló quitar ${v}`);return}
+  if(!g.draws.includes(v))return;disarmUndo();g.draws.splice(g.draws.indexOf(v),1);Log.add("warn","juego","UNMARK",`bola ${v} quitada (mantener presionado + confirmar)`,{n:g.draws.length});toast(`Bolilla ${v} quitada`);afterChange()}
 function afterChange(newBall){
   const g=S.game;saveGame();const ev=evalCards();
   g.alerted=g.alerted||{linea:[],full:[]};
+  // si se quita una bola y el cartón deja de ganar, su alerta se borra (y podrá volver a avisar)
   g.alerted.linea=g.alerted.linea.filter(id=>ev.find(e=>e.c.id===id&&e.best===0));g.alerted.full=g.alerted.full.filter(id=>ev.find(e=>e.c.id===id&&e.total===0));
   render.play(newBall);
   if(newBall==null)return;
   const fullW=ev.filter(e=>e.total===0&&!g.alerted.full.includes(e.c.id));
-  const lineW=g.phase==="linea"?ev.filter(e=>e.best===0&&!g.alerted.linea.includes(e.c.id)):[];
+  const lineW=(g.phase||"linea")==="linea"?ev.filter(e=>e.best===0&&!g.alerted.linea.includes(e.c.id)):[];
   if(fullW.length){fullW.forEach(e=>g.alerted.full.push(e.c.id));lineW.forEach(e=>g.alerted.linea.push(e.c.id));saveGame();showAlert("full",fullW)}
   else if(lineW.length){lineW.forEach(e=>g.alerted.linea.push(e.c.id));saveGame();showAlert("linea",lineW)}
-  else{const ev1=ev.filter(e=>g.phase==="linea"?e.best===1:e.total===1);if(ev1.length)buzz(25)}
+  else{const ev1=ev.filter(e=>(g.phase||"linea")==="linea"?e.best===1:e.total===1);if(ev1.length)buzz(25)}
 }
 function showAlert(kind,wins){
-  const A=$("#alert"),w=wins[0],C=called();A.className="on "+(kind==="full"?"full":"");
-  Log.add("info","juego","ALERT",`${kind==="full"?"TABLA LLENA":"LÍNEA"}: ${wins.map(e=>e.c.carton+"/"+e.c.serie).join(", ")}`,{bolas:S.game.draws.length,review:wins.filter(e=>e.c.status==="review").length});
+  const A=$("#alert"),w=wins[0],C=called();A.className="on "+(kind==="full"?"full":"");P.sheet=false;
+  Log.add("info","juego","ALERT",`${kind==="full"?"TABLA LLENA":"LÍNEA"}: ${wins.map(e=>e.c.carton+"/"+e.c.serie).join(", ")}`,{bolas:S.game.draws.length,sinConfirmar:wins.filter(e=>!e.c.confirmed).length});
   $("#aT").innerHTML=kind==="full"?"¡BINGO!<small>TABLA LLENA</small>":"¡LÍNEA!";
   $("#aWho").innerHTML=`Cartón ${esc(w.c.carton||"¿?")} · <span class="ser">Serie ${esc(w.c.serie||"—")}</span>${!w.c.confirmed?' <span class="chip" style="color:var(--warn)">⚠ cartón sin confirmar: compáralo con el físico</span>':""}`;
   $("#aCard").innerHTML=miniHTML(w.c,{called:C});
   $("#aMore").textContent=(kind==="linea"?`Fila ${w.bestRow+1} completa. `:"")+(wins.length>1?`También: ${wins.slice(1).map(e=>"cartón "+e.c.carton).join(", ")}`:"");
   const acts=$("#aActs");acts.innerHTML=(kind==="linea"?'<button class="btn pri" data-a="full">Cobrado · seguir a tabla llena</button>':"")+'<button class="btn" data-a="x">Cerrar</button>';
-  acts.querySelectorAll("button").forEach(b=>b.onclick=()=>{if(b.dataset.a==="full"){S.game.phase="full";Log.add("info","juego","PHASE","fase: full (desde alerta)");saveGame();render.play()}A.className=""});
+  acts.querySelectorAll("button").forEach(b=>b.onclick=()=>{if(b.dataset.a==="full"){S.game.phase="full";Log.add("info","juego","PHASE","fase: full (desde alerta)");saveGame()}A.className="";render.play()});
   beep(kind==="full"?[[784,.15],[988,.15],[1175,.15],[1568,.4],[1175,.15],[1568,.5]]:[[988,.14],[1319,.14],[1568,.35],[1319,.14],[1568,.4]]);
   buzz(kind==="full"?[400,120,400,120,400,120,800]:[300,120,300,120,600]);
 }
-async function moreMenu(){
-  const v=await ask(`<h2 style="margin-top:0">Opciones del juego</h2><p class="mut small">${S.game.draws.length} bolas marcadas.</p>
-    <div class="field"><label>Pegar o escribir varias bolas (separadas por espacio o coma)</label><input id="mBulk" inputmode="numeric" placeholder="Ej.: 5 18 44 90"></div>`,
-    [{t:"Reiniciar bolas",v:"reset",cls:"bad"},{t:"Cerrar",v:null},{t:"Agregar",v:"__input",cls:"pri"}]);
-  if(v==="reset"){if(await ask(`<h2 style="margin-top:0">¿Borrar todas las bolas?</h2><p>Los cartones no se tocan.</p>`,[{t:"Cancelar",v:false},{t:"Borrar bolas",v:true,cls:"bad"}])===true){Log.add("info","juego","RESET",`bolas reiniciadas (${S.game.draws.length})`);S.game.draws=[];S.game.alerted={linea:[],full:[]};S.game.phase="linea";afterChange()}return}
-  if(typeof v==="string"&&v.trim()){const p=Rules.parseBalls(v,S.game.draws);let last=null;for(const n of p.ok){S.game.draws.push(n);last=n}
+async function moreMenu(){const g=S.game,snap=g.prev&&g.prev.draws&&g.prev.draws.length&&!g.draws.length?g.prev:null;
+  const v=await ask(`<h2 style="margin-top:0">Opciones del juego</h2><p class="mut small">${g.draws.length} bolillas marcadas · fase ${g.phase==="full"?"Tabla llena":"Línea"}.</p>
+    <div class="field"><label for="mBulk">Agregar varias bolillas (separadas por espacio o coma)</label><input id="mBulk" inputmode="numeric" placeholder="Ej.: 5 18 44 90"></div>
+    ${snap?`<p class="mut small">Hay un juego anterior guardado de ${snap.draws.length} bolillas (${new Date(snap.at).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"})}).</p>`:""}`,
+    [...(snap?[{t:"Recuperar juego anterior",v:"restore"}]:[]),{t:"Reiniciar juego",v:"reset",cls:"bad"},{t:"Cerrar",v:null},{t:"Agregar",v:"__input",cls:"pri"}]);
+  if(v==="reset"){if(!g.draws.length&&!(g.alerted&&(g.alerted.linea.length||g.alerted.full.length))&&g.phase!=="full"){toast("El juego ya está limpio: no hay bolillas marcadas");return}
+    const ok=await ask(`<h2 style="margin-top:0">¿Reiniciar el juego?</h2><p>Esto deja todo en cero:</p><ul class="rlist"><li>Se desmarcan las <b>${g.draws.length}</b> bolillas.</li><li>Se borran las alertas de línea y tabla llena (${(g.alerted?g.alerted.linea.length+g.alerted.full.length:0)}).</li><li>Vuelve a la fase <b>Línea</b>.</li></ul><p class="mut small">Los cartones y sus confirmaciones NO se tocan. Si fue un error, podrás recuperar este juego desde «Más».</p>`,[{t:"Cancelar",v:false},{t:"Reiniciar todo",v:true,cls:"bad"}]);
+    if(ok!==true){Log.add("info","juego","RESET_CANCEL","reinicio cancelado");return}
+    g.prev={draws:g.draws.slice(),phase:g.phase,alerted:JSON.parse(JSON.stringify(g.alerted||{linea:[],full:[]})),at:Date.now()};
+    Log.add("warn","juego","RESET",`juego reiniciado (${g.draws.length} bolillas, fase ${g.phase})`,{draws:g.draws.slice(),alerted:g.alerted});
+    g.draws=[];g.alerted={linea:[],full:[]};g.phase="linea";disarmUndo();afterChange();toast("Juego reiniciado: todo en cero");return}
+  if(v==="restore"&&snap){g.draws=snap.draws.slice();g.phase=snap.phase||"linea";g.alerted=snap.alerted||{linea:[],full:[]};g.prev=null;Log.add("warn","juego","RESTORE",`juego anterior recuperado (${g.draws.length} bolillas)`);afterChange();toast(`Recuperadas ${g.draws.length} bolillas`);return}
+  if(typeof v==="string"&&v.trim()){const p=Rules.parseBalls(v,g.draws);let last=null;for(const n of p.ok){g.draws.push(n);last=n}
     Log.add(p.bad.length?"warn":"info","juego","BULK",`bolas en bloque: ${p.ok.length} aceptadas${p.bad.length?`, ${p.bad.length} rechazadas`:""}`,{texto:v,ok:p.ok,rechazadas:p.bad});
-    if(p.bad.length){Log.add("warn","reglas","BALL_REJECT",p.bad.map(b=>b.msg).join("; "));await ask(`<h2 style="margin-top:0">Algunas bolas no se agregaron</h2><p>${p.bad.map(b=>"✕ "+esc(b.msg)).join("<br>")}</p>${p.ok.length?`<p class="mut">Agregadas: ${p.ok.join(", ")}</p>`:""}`,[{t:"Entendido",v:null,cls:"pri"}])}
-    if(last!=null)afterChange(last)}
+    if(last!=null)afterChange(last);
+    if(p.bad.length){Log.add("warn","reglas","BALL_REJECT",p.bad.map(b=>b.msg).join("; "));await ask(`<h2 style="margin-top:0">Algunas bolillas no se agregaron</h2><p>${p.bad.map(b=>"✕ "+esc(b.msg)).join("<br>")}</p>${p.ok.length?`<p class="mut">Agregadas: ${p.ok.join(", ")}</p>`:""}`,[{t:"Entendido",v:null,cls:"pri"}])}}
 }
 render.play=(newBall)=>{
-  const g=S.game;if(!$("#board").children.length)buildBoard();
+  const g=S.game;if(!g)return;if(!$("#board .bh"))buildBoard();
   $$("#phase button").forEach(b=>b.classList.toggle("on",b.dataset.p===(g.phase||"linea")));
   const C=called(),ev=evalCards(),phase=g.phase||"linea";
-  const rv=S.cards.filter(pending).length,ban=$("#playWarn");ban.hidden=!rv;ban.innerHTML=rv?`⚠ ${rv} cartón(es) sin confirmar: sus alertas pueden no ser exactas. <u>Confirmar</u>`:"";
+  const rv=S.cards.filter(pending).length,ban=$("#playWarn");ban.hidden=!rv;ban.textContent=rv?`⚠ ${rv} sin confirmar`:"";
   const hot=new Set();for(const e of ev){if(phase==="linea"){e.miss.forEach((m,i)=>{if(e.c.rows[i].length===5&&m.length===1)hot.add(m[0])})}else if(e.total===1)hot.add(e.miss.flat()[0])}
-  $$("#board button[data-n]").forEach(b=>{const n=+b.dataset.n;b.classList.toggle("on",C.has(n));b.classList.toggle("hot",hot.has(n))});
+  $$("#board button[data-n]").forEach(b=>{const n=+b.dataset.n;b.classList.toggle("on",C.has(n));b.classList.toggle("hot",hot.has(n)&&!C.has(n));b.setAttribute("aria-pressed",C.has(n))});
   if(newBall){const b=$(`#board button[data-n="${newBall}"]`);if(b){b.classList.remove("flash");void b.offsetWidth;b.classList.add("flash")}}
   const last=g.draws[g.draws.length-1],bb=$("#bigBall");bb.className="bigball"+(last?"":" empty");bb.textContent=last||"—";
-  $("#prevBalls").innerHTML=g.draws.slice(-7,-1).reverse().map(v=>`<span>${v}</span>`).join("");$("#ballCnt").textContent=g.draws.length;
-  let list=phase==="linea"?ev.slice().sort((a,b)=>a.best-b.best||a.total-b.total):ev.slice().sort((a,b)=>a.total-b.total||a.best-b.best);
-  list=list.slice(0,10);
-  const N=$("#near");
-  if(!S.cards.length){N.innerHTML='<div class="empty">No hay cartones en esta partida. Ve a <b>Escanear</b>.</div>';return}
-  N.innerHTML=`<h3>${phase==="linea"?"Más cerca de LÍNEA":"Más cerca de TABLA LLENA"} <span class="mut small">· ${S.cards.length} cartones</span></h3>`+list.map(e=>{
-    const k=phase==="linea"?e.best:e.total,m=phase==="linea"?(e.miss[e.bestRow]||[]):e.miss.flat();
-    const cls=k===0?"win":k===1?"one":"";
-    const miss=k>=99?'<span class="mut" style="background:none;font-weight:500">cartón incompleto: revísalo</span>':k===0?'<span style="background:#14532d;color:#86efac">¡COMPLETO!</span>':(m.length<=8?m.map(v=>`<span>${v}</span>`).join(""):`<span class="mut" style="background:none;font-weight:500">aún lejos</span>`);
-    return`<div class="nitem ${cls}" data-id="${e.c.id}"><div class="k">${esc(e.c.carton||"¿?")}${!e.c.confirmed?" ⚠":""}<small>S ${esc(e.c.serie||"—")}</small></div><div class="miss">${miss}</div><div class="n">${k>=99?"":`${phase==="linea"?`fila ${e.bestRow+1}<br>`:""}falta${k===1?"":"n"} ${k}`}</div></div>`}).join("");
-  N.querySelectorAll(".nitem").forEach(el=>el.onclick=()=>{const c=S.cards.find(x=>x.id===el.dataset.id);const e=ev.find(x=>x.c.id===c.id);
-    ask(`<h2 style="margin-top:0">Cartón ${esc(c.carton)} · <span style="color:#ff6b6b">Serie ${esc(c.serie)}</span></h2>${miniHTML(c,{called:C,need:new Set(phase==="linea"?(e.miss[e.bestRow]||[]):e.miss.flat())})}`,[{t:"Cerrar",v:null}])});
+  $("#prevBalls").innerHTML=g.draws.slice(-6,-1).reverse().map(v=>`<span>${v}</span>`).join("");$("#ballCnt").textContent=g.draws.length;renderUndo();
+  const list=(phase==="linea"?ev.slice().sort((a,b)=>a.best-b.best||a.total-b.total):ev.slice().sort((a,b)=>a.total-b.total||a.best-b.best)).slice(0,12);
+  const k=e=>phase==="linea"?e.best:e.total,mis=e=>phase==="linea"?(e.miss[e.bestRow]||[]):e.miss.flat();
+  // resumen del panel (siempre visible)
+  const sum=$("#pSum");
+  if(!S.cards.length)sum.innerHTML='<span class="mut">No hay cartones en esta partida</span>';
+  else sum.innerHTML=list.slice(0,2).map(e=>{const n=k(e);return n>=99?`<span>${esc(e.c.carton)} <i class="mut">incompleto</i></span>`:`<span class="${n===0?"w":n===1?"o":""}">${esc(e.c.carton)}${!e.c.confirmed?"⚠":""} ${n===0?"¡COMPLETO!":`falta${n===1?"":"n"} ${n}${n<=2?` (${mis(e).join(", ")})`:""}`}</span>`}).join(" · ");
+  $("#psheet").classList.toggle("open",P.sheet);$("#psheetBg").hidden=!P.sheet;$("#pTog").textContent=P.sheet?"Ocultar ▼":`Ver ${S.cards.length} ▲`;
+  $("#near").innerHTML=!S.cards.length?'<div class="empty">Ve a <b>Escanear</b> para agregar cartones.</div>':
+    `<h3>${phase==="linea"?"Más cerca de LÍNEA":"Más cerca de TABLA LLENA"}</h3>`+list.map(e=>{const n=k(e);
+      return`<div class="pcard ${n===0?"win":n===1?"one":""}"><div class="pch"><b>${esc(e.c.carton||"¿?")}</b><span class="ser">S ${esc(e.c.serie||"—")}</span>${!e.c.confirmed?'<span class="mut small">⚠ sin confirmar</span>':""}<span class="pk">${n>=99?"incompleto: revísalo":n===0?"¡COMPLETO!":`${phase==="linea"?`fila ${e.bestRow+1} · `:""}falta${n===1?"":"n"} ${n}`}</span></div>${miniHTML(e.c,{called:C,need:new Set(n<99?mis(e):[])})}</div>`}).join("");
   renderHeader();
 };
 $("#playWarn").onclick=()=>{S.filter="pending";go("cards")};
