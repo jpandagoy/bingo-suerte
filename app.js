@@ -29,10 +29,14 @@ function normalizeCard(c){if(!c.grid)c.grid=Rules.gridFromRows(c.rows);c.grid=c.
 /* aplica TODAS las reglas al cartón; guarda el resultado en el cartón */
 function applyRules(card,dub){
   const g=Rules.checkCard(card,S.cards);card.rows=g.rows;card.issues=g.errors.map(e=>e.code+" "+e.msg);card.warns=g.warnings.map(e=>e.code+" "+e.msg);
-  card.bad=[...g.cellErr.keys()];card.dub=dub||card.dub||[];card.status=(!g.errors.length&&!card.dub.length)?"ok":"review";return g}
+  card.bad=[...g.cellErr.keys()];card.dub=dub||card.dub||[];card.status=(!g.errors.length&&!card.dub.length)?"ok":"review";
+  if(g.errors.length)card.confirmed=false;return g}
+/* confirmado = una persona comparó el cartón con la foto/físico. Solo se puede si NO incumple reglas (las dudas sí se pueden confirmar). */
+const pending=c=>!c.confirmed;
+const canConfirm=c=>!(c.issues&&c.issues.length)&&c.grid.flat().every(v=>v!==-1)&&!!c.carton;
 
 /* ================= estado ================= */
-const S={games:[],game:null,cards:[],view:"games",filter:"all"};
+const S={games:[],game:null,cards:[],view:"games",filter:"pending"};
 const called=()=>new Set(S.game?S.game.draws:[]);
 async function loadAll(){
   S.games=(await DB.all("games")).sort((a,b)=>b.created-a.created);
@@ -51,8 +55,9 @@ let AC=null;function beep(seq){try{AC=AC||new (window.AudioContext||window.webki
 const buzz=p=>{try{navigator.vibrate&&navigator.vibrate(p)}catch(e){}};
 let wake=null;async function keepAwake(on){try{if(on&&!wake&&navigator.wakeLock){wake=await navigator.wakeLock.request("screen");wake.addEventListener("release",()=>{wake=null})}else if(!on&&wake){await wake.release();wake=null}}catch(e){}}
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&(S.view==="play"||S.view==="scan"))keepAwake(true)});
-function ask(html,buttons){return new Promise(res=>{const d=$("#dlg");d.innerHTML=html+`<div class="row" style="justify-content:flex-end;margin-top:14px">${buttons.map((b,i)=>`<button class="btn sm ${b.cls||""}" data-i="${i}">${esc(b.t)}</button>`).join("")}</div>`;
-  d.querySelectorAll("[data-i]").forEach(b=>b.onclick=()=>{const v=buttons[+b.dataset.i].v;const f=d.querySelector("input");d.close();res(v==="__input"?(f?f.value:""):v)});d.onclose=()=>res(null);d.showModal();const f=d.querySelector("input");if(f)setTimeout(()=>f.focus(),50)})}
+const SINK='<div class="fsink" tabindex="-1" autofocus></div>'; // el modal enfoca esto, no un campo → no se abre el teclado solo
+function ask(html,buttons){return new Promise(res=>{const d=$("#dlg");d.innerHTML=SINK+html+`<div class="row" style="justify-content:flex-end;margin-top:14px">${buttons.map((b,i)=>`<button class="btn sm ${b.cls||""}" data-i="${i}">${esc(b.t)}</button>`).join("")}</div>`;
+  d.querySelectorAll("[data-i]").forEach(b=>b.onclick=()=>{const v=buttons[+b.dataset.i].v;const f=d.querySelector("input");d.close();res(v==="__input"?(f?f.value:""):v)});d.onclose=()=>res(null);d.showModal()})}
 
 /* miniatura 3×9 de un cartón */
 function miniHTML(card,opts){opts=opts||{};const C=opts.called||new Set(),need=opts.need||new Set(),dub=new Set(card.dub||[]),bad=new Set(card.bad||[]);let h='<div class="mini">';
@@ -71,7 +76,7 @@ function go(v){if((v==="scan"||v==="play"||v==="cards")&&!S.game){v="games";toas
   if(v==="log")Log.render();else render[v]&&render[v]();$("main").scrollTop=0}
 $$("#tabs button").forEach(b=>b.onclick=()=>go(b.dataset.v));
 function renderHeader(){const g=S.game;$("#hSub").textContent=g?`${g.name||"Partida"} · ${S.cards.length} cartones`:"Sin partida";$("#hSerieV").textContent=g&&g.serie?g.serie:"—";
-  const rv=S.cards.filter(c=>c.status==="review").length,b=$("#revBadge");b.hidden=!rv;b.textContent=rv}
+  const rv=S.cards.filter(pending).length,b=$("#revBadge");b.hidden=!rv;b.textContent=rv}
 $("#hSerie").onclick=async()=>{if(!S.game)return;const v=await ask(`<h2 style="margin-top:0">Serie de la partida</h2><p class="mut small">Se usa para los cartones nuevos que escanees. Los ya guardados conservan la suya.</p><div class="field"><input inputmode="numeric" maxlength="4" value="${esc(S.game.serie||"")}"></div>`,[{t:"Cancelar",v:null},{t:"Guardar",v:"__input",cls:"pri"}]);
   if(v==null)return;if(!/^\d{1,4}$/.test(v.trim())){toast("La serie son 4 dígitos (ej.: 0479)");Log.add("warn","reglas","G01",`serie inválida: "${v}"`);return}
   const old=S.game.serie;S.game.serie=pad4(v);await DB.put("games",S.game);Log.add("info","partidas","SERIE",`serie ${old} → ${S.game.serie}`);renderHeader()};
@@ -207,7 +212,7 @@ const Cam=(()=>{
   const video=$("#video"),ov=$("#overlay"),msg=$("#scanMsg");
   const say=(t,cls)=>{msg.textContent=t;msg.className=cls||""};
   const IDLE_MS=120000;
-  const setCnt=()=>{const n=S.cards.length;$("#cCnt").textContent=`${n} cartón${n===1?"":"es"} en la partida`};
+  const setCnt=()=>{const n=S.cards.length;$("#cCnt").textContent=`${n} ${n===1?"cartón":"cartones"} en la partida`};
   function ui(on){$("#scanWrap").classList.toggle("live",on);$("#scanStart").style.display=on?"none":"";$("#tGroup").disabled=!on}
   async function start(){
     if(!S.game){toast("Primero crea una partida");return}if(run)return;
@@ -306,13 +311,30 @@ $("#tFiles").onchange=async e=>{const fs=[...e.target.files];e.target.value="";i
 render.scan=()=>{renderHeader()};
 
 /* ================= CARTONES ================= */
-render.cards=()=>{const C=S.cards.slice().sort((a,b)=>(b.status==="review")-(a.status==="review")||String(a.carton).localeCompare(String(b.carton)));
-  const rv=C.filter(c=>c.status==="review").length;$("#cCount").textContent=`${C.length} cartón${C.length===1?"":"es"}`;$("#cSub").textContent=rv?`${rv} por revisar (toca para corregir)`:"Todos verificados";
-  $$("#cSeg button").forEach(b=>b.classList.toggle("on",b.dataset.f===S.filter));
-  const L=C.filter(c=>S.filter==="all"||c.status==="review");
-  $("#cList").innerHTML=L.length?L.map(c=>`<div class="cardbox ${c.status==="review"?"review":""}" data-id="${c.id}"><div class="cardhead"><span>Cartón ${esc(c.carton||"¿?")}</span><span class="ser">Serie ${esc(c.serie||"—")}</span><span class="sp"></span>${c.status==="review"?'<span class="chip" style="color:var(--warn)">⚠ Revisar</span>':""}</div>${miniHTML(c)}${c.status==="review"?issuesHTML(c):""}</div>`).join("")
-    :`<div class="empty">${S.filter==="review"?"Nada por revisar 👍":"Aún no hay cartones. Ve a <b>Escanear</b>."}</div>`;
-  $$("#cList .cardbox").forEach(el=>el.onclick=()=>editCard(S.cards.find(c=>c.id===el.dataset.id)));renderHeader()};
+const stateOf=c=>c.confirmed?"conf":c.status==="review"?"review":"read";
+render.cards=()=>{const ord={review:0,read:1,conf:2};
+  const C=S.cards.slice().sort((a,b)=>ord[stateOf(a)]-ord[stateOf(b)]||String(a.carton).localeCompare(String(b.carton)));
+  const np=C.filter(pending).length,nr=C.filter(c=>stateOf(c)==="review").length;
+  $("#cCount").textContent=`${C.length} ${C.length===1?"cartón":"cartones"} · ${C.length-np} confirmado${C.length-np===1?"":"s"}`;
+  $("#cSub").textContent=np?`${np} por confirmar${nr?` (${nr} con dudas o errores)`:""} — compara con la foto y toca Confirmar`:"Todos confirmados ✓";
+  $$("#cSeg button").forEach(b=>{b.classList.toggle("on",b.dataset.f===S.filter);if(b.dataset.f==="pending")b.textContent=`Por confirmar (${np})`});
+  const L=C.filter(c=>S.filter==="all"||pending(c));
+  $("#cList").innerHTML=L.length?L.map(c=>{const st=stateOf(c),ok=canConfirm(c);
+    const chip=st==="conf"?'<span class="chip okc">✓ Confirmado</span>':st==="review"?'<span class="chip wc">⚠ Revisar</span>':'<span class="chip rc">Leído · sin confirmar</span>';
+    return`<div class="cardbox st-${st}" data-id="${c.id}"><div class="cardhead"><span>Cartón ${esc(c.carton||"¿?")}</span><span class="ser">Serie ${esc(c.serie||"—")}</span><span class="sp"></span>${chip}</div>
+    ${st!=="conf"&&c.thumb?`<img class="cthumb" src="${c.thumb}" alt="foto del cartón ${esc(c.carton)}">`:""}${miniHTML(c)}${st!=="conf"?issuesHTML(c):""}
+    <div class="cacts">${st==="conf"?`<button class="btn sm" data-a="edit">Editar</button>${c.thumb?'<button class="btn sm" data-a="photo">Ver foto</button>':""}`:
+      `<button class="btn sm" data-a="edit">✏ Editar</button><button class="btn sm ok ${ok?"":"off"}" data-a="conf">${ok?"✓ Confirmar":"Corrige antes de confirmar"}</button>`}</div></div>`}).join("")
+    :`<div class="empty">${S.filter==="pending"?"Nada por confirmar 👍 Todos los cartones están verificados.":"Aún no hay cartones. Ve a <b>Escanear</b>."}</div>`;
+  $$("#cList [data-a]").forEach(btn=>btn.onclick=async ev=>{ev.stopPropagation();const box=btn.closest(".cardbox"),c=S.cards.find(x=>x.id===box.dataset.id);
+    if(btn.dataset.a==="edit")return editCard(c);
+    if(btn.dataset.a==="photo")return ask(`<h2 style="margin-top:0">Cartón ${esc(c.carton)}</h2><img class="thumb" src="${c.thumb}" alt="">${miniHTML(c)}`,[{t:"Cerrar",v:null}]);
+    if(btn.dataset.a==="conf"){if(!canConfirm(c)){toast("Este cartón incumple reglas: corrígelo con Editar");Log.add("warn","reglas","RULE_BLOCK",`no se confirmó ${c.carton}: incumple reglas`,{issues:c.issues});buzz(60);return}
+      const hadDub=(c.dub||[]).length;c.confirmed=true;c.confirmedAt=Date.now();c.dub=[];c.status="ok";
+      try{await DB.put("cards",c)}catch(e){toast("No se pudo guardar");return}
+      Log.add("info","cartones","CONFIRM",`cartón ${c.carton} confirmado desde la vista previa${hadDub?` (tenía ${hadDub} duda(s))`:""}`,{id:c.id,hadDub});
+      buzz(30);box.classList.add("gone");setTimeout(()=>render.cards(),S.filter==="pending"?260:0);renderHeader()}});
+  renderHeader()};
 $$("#cSeg button").forEach(b=>b.onclick=()=>{S.filter=b.dataset.f;render.cards()});
 $("#cAdd").onclick=()=>editCard(null);
 
@@ -323,7 +345,7 @@ function editCard(card){
   const d=$("#dlg"),dub=new Set(card.dub||[]),G=card.grid;let cells="";
   const heads=["1–9","10","20","30","40","50","60","70","80–90"].map(h=>`<div class="eh">${h}</div>`).join("");
   for(let r=0;r<3;r++)for(let c=0;c<9;c++){const v=G[r][c],i=r*9+c;cells+=`<input inputmode="numeric" pattern="[0-9]*" maxlength="2" autocomplete="off" data-i="${i}" data-r="${r}" data-c="${c}" value="${v==null||v===-1?"":v}" placeholder="${v===-1?"?":""}" class="${v==null?"blk":dub.has(i)||v===-1?"dub":""}">`}
-  d.innerHTML=`<h2 style="margin:0 0 10px">${isNew?"Agregar cartón":"Cartón "+esc(card.carton||"¿?")}</h2>
+  d.innerHTML=SINK+`<h2 style="margin:0 0 10px">${isNew?"Agregar cartón":"Cartón "+esc(card.carton||"¿?")}</h2>
     ${card.thumb?`<img class="thumb" src="${card.thumb}" alt="foto del cartón">`:""}
     <div class="row" style="margin-top:10px"><div class="field grow" style="margin:0"><label>Nº de cartón</label><input id="eC" inputmode="numeric" maxlength="4" value="${esc(card.carton)}"></div><div class="field grow" style="margin:0"><label>Serie</label><input id="eS" inputmode="numeric" maxlength="4" value="${esc(card.serie)}"></div></div>
     <p class="mut small" style="margin:10px 0 4px">Cada columna es una decena. 5 números por fila, 15 en total, sin repetir, del 1 al 90. Amarillo = el lector dudó.</p>
@@ -359,7 +381,7 @@ function editCard(card){
       d.querySelector("#eM").classList.remove("shake");void d.querySelector("#eM").offsetWidth;d.querySelector("#eM").classList.add("shake");buzz(60);return}
     if(res.warnings.length&&!warnOk){warnOk=true;validate();return}
     const grid=last.g.map(r=>r.map(v=>v==null?null:+v));
-    Object.assign(card,{carton:pad4(last.carton),serie:pad4(last.serie),grid});applyRules(card,[]);
+    Object.assign(card,{carton:pad4(last.carton),serie:pad4(last.serie),grid});applyRules(card,[]);card.confirmed=card.status==="ok";card.confirmedAt=Date.now();
     try{await DB.put("cards",card)}catch(e){toast("No se pudo guardar");return}
     if(isNew)S.cards.push(card);Log.add("info","editor","SAVE",`cartón ${card.carton} ${isNew?"agregado":"corregido"} (${card.status})`,{id:card.id,warns:card.warns});
     d.close();toast(`Cartón ${card.carton} guardado`);renderAll()};
@@ -377,15 +399,22 @@ function buildBoard(){const B=$("#board");let h="";
   for(let t=0;t<9;t++)for(let u=0;u<10;u++){const v=t*10+u;h+=v===0?'<button class="ph" tabindex="-1"></button>':`<button data-n="${v}">${v}</button>`}
   h+='<button data-n="90">90</button><button class="util undo" id="bUndo" style="grid-column:span 5">↶ Deshacer</button><button class="util" id="bMore" style="grid-column:span 4">Más…</button>';
   B.innerHTML=h;
-  B.onclick=e=>{const b=e.target.closest("button[data-n]");if(!b)return;toggleBall(+b.dataset.n)};
+  let lp=null;
+  B.onpointerdown=e=>{const b=e.target.closest("button[data-n].on");if(!b)return;clearTimeout(lp);lp=setTimeout(()=>{lp="fired";buzz(40);removeBall(+b.dataset.n)},650)};
+  const cancel=()=>{if(lp&&lp!=="fired"){clearTimeout(lp);lp=null}};B.onpointerup=cancel;B.onpointercancel=cancel;B.onpointerleave=cancel;
+  B.oncontextmenu=e=>e.preventDefault();
+  B.onclick=e=>{const b=e.target.closest("button[data-n]");if(!b)return;if(lp==="fired"){lp=null;return}markBall(+b.dataset.n)};
   $("#bUndo").onclick=()=>{const g=S.game;if(!g.draws.length)return;const v=g.draws.pop();Log.add("info","juego","UNDO",`deshacer bola ${v}`,{n:g.draws.length});afterChange();toast("Quitada la bola "+v)};
   $("#bMore").onclick=moreMenu;
   $$("#phase button").forEach(b=>b.onclick=()=>{S.game.phase=b.dataset.p;Log.add("info","juego","PHASE","fase: "+b.dataset.p);saveGame();render.play()});
 }
-function toggleBall(v){const g=S.game,i=g.draws.indexOf(v);
-  if(i>=0){g.draws.splice(i,1);Log.add("info","juego","UNMARK",`bola ${v} desmarcada`,{n:g.draws.length});toast(`Bola ${v} desmarcada`);afterChange();return}
+function markBall(v){const g=S.game;
+  if(g.draws.includes(v)){Log.add("info","juego","BALL_AGAIN",`toque sobre ${v} ya marcada (no se desmarca)`);toast(`${v} ya está marcada. Para quitarla: mantén presionado o usa Deshacer`);buzz([30,40,30]);return}
   const bad=Rules.checkBall(v,g.draws);if(bad){Log.add("warn","reglas","BALL_REJECT",bad.msg,{code:bad.code});toast(bad.msg);return}
   g.draws.push(v);Log.add("info","juego","BALL",`bola ${v}`,{n:g.draws.length});afterChange(v)}
+async function removeBall(v){const g=S.game;if(!g.draws.includes(v))return;
+  if(await ask(`<h2 style="margin-top:0">¿Quitar la bola ${v}?</h2><p class="mut">Solo hazlo si la marcaste por error. Afecta a todos los cartones.</p>`,[{t:"No, dejarla",v:false},{t:`Quitar ${v}`,v:true,cls:"bad"}])!==true){Log.add("info","juego","UNMARK_CANCEL",`se canceló quitar ${v}`);return}
+  g.draws.splice(g.draws.indexOf(v),1);Log.add("warn","juego","UNMARK",`bola ${v} quitada (mantener presionado + confirmar)`,{n:g.draws.length});toast(`Bola ${v} quitada`);afterChange()}
 function afterChange(newBall){
   const g=S.game;saveGame();const ev=evalCards();
   g.alerted=g.alerted||{linea:[],full:[]};
@@ -402,7 +431,7 @@ function showAlert(kind,wins){
   const A=$("#alert"),w=wins[0],C=called();A.className="on "+(kind==="full"?"full":"");
   Log.add("info","juego","ALERT",`${kind==="full"?"TABLA LLENA":"LÍNEA"}: ${wins.map(e=>e.c.carton+"/"+e.c.serie).join(", ")}`,{bolas:S.game.draws.length,review:wins.filter(e=>e.c.status==="review").length});
   $("#aT").innerHTML=kind==="full"?"¡BINGO!<small>TABLA LLENA</small>":"¡LÍNEA!";
-  $("#aWho").innerHTML=`Cartón ${esc(w.c.carton||"¿?")} · <span class="ser">Serie ${esc(w.c.serie||"—")}</span>${w.c.status==="review"?' <span class="chip" style="color:var(--warn)">⚠ cartón sin revisar: compáralo con el físico</span>':""}`;
+  $("#aWho").innerHTML=`Cartón ${esc(w.c.carton||"¿?")} · <span class="ser">Serie ${esc(w.c.serie||"—")}</span>${!w.c.confirmed?' <span class="chip" style="color:var(--warn)">⚠ cartón sin confirmar: compáralo con el físico</span>':""}`;
   $("#aCard").innerHTML=miniHTML(w.c,{called:C});
   $("#aMore").textContent=(kind==="linea"?`Fila ${w.bestRow+1} completa. `:"")+(wins.length>1?`También: ${wins.slice(1).map(e=>"cartón "+e.c.carton).join(", ")}`:"");
   const acts=$("#aActs");acts.innerHTML=(kind==="linea"?'<button class="btn pri" data-a="full">Cobrado · seguir a tabla llena</button>':"")+'<button class="btn" data-a="x">Cerrar</button>';
@@ -424,7 +453,7 @@ render.play=(newBall)=>{
   const g=S.game;if(!$("#board").children.length)buildBoard();
   $$("#phase button").forEach(b=>b.classList.toggle("on",b.dataset.p===(g.phase||"linea")));
   const C=called(),ev=evalCards(),phase=g.phase||"linea";
-  const rv=S.cards.filter(c=>c.status==="review").length,ban=$("#playWarn");ban.hidden=!rv;ban.innerHTML=rv?`⚠ ${rv} cartón(es) por revisar: sus alertas pueden no ser exactas. <u>Revisar</u>`:"";
+  const rv=S.cards.filter(pending).length,ban=$("#playWarn");ban.hidden=!rv;ban.innerHTML=rv?`⚠ ${rv} cartón(es) sin confirmar: sus alertas pueden no ser exactas. <u>Confirmar</u>`:"";
   const hot=new Set();for(const e of ev){if(phase==="linea"){e.miss.forEach((m,i)=>{if(e.c.rows[i].length===5&&m.length===1)hot.add(m[0])})}else if(e.total===1)hot.add(e.miss.flat()[0])}
   $$("#board button[data-n]").forEach(b=>{const n=+b.dataset.n;b.classList.toggle("on",C.has(n));b.classList.toggle("hot",hot.has(n))});
   if(newBall){const b=$(`#board button[data-n="${newBall}"]`);if(b){b.classList.remove("flash");void b.offsetWidth;b.classList.add("flash")}}
@@ -438,12 +467,12 @@ render.play=(newBall)=>{
     const k=phase==="linea"?e.best:e.total,m=phase==="linea"?(e.miss[e.bestRow]||[]):e.miss.flat();
     const cls=k===0?"win":k===1?"one":"";
     const miss=k>=99?'<span class="mut" style="background:none;font-weight:500">cartón incompleto: revísalo</span>':k===0?'<span style="background:#14532d;color:#86efac">¡COMPLETO!</span>':(m.length<=8?m.map(v=>`<span>${v}</span>`).join(""):`<span class="mut" style="background:none;font-weight:500">aún lejos</span>`);
-    return`<div class="nitem ${cls}" data-id="${e.c.id}"><div class="k">${esc(e.c.carton||"¿?")}${e.c.status==="review"?" ⚠":""}<small>S ${esc(e.c.serie||"—")}</small></div><div class="miss">${miss}</div><div class="n">${k>=99?"":`${phase==="linea"?`fila ${e.bestRow+1}<br>`:""}falta${k===1?"":"n"} ${k}`}</div></div>`}).join("");
+    return`<div class="nitem ${cls}" data-id="${e.c.id}"><div class="k">${esc(e.c.carton||"¿?")}${!e.c.confirmed?" ⚠":""}<small>S ${esc(e.c.serie||"—")}</small></div><div class="miss">${miss}</div><div class="n">${k>=99?"":`${phase==="linea"?`fila ${e.bestRow+1}<br>`:""}falta${k===1?"":"n"} ${k}`}</div></div>`}).join("");
   N.querySelectorAll(".nitem").forEach(el=>el.onclick=()=>{const c=S.cards.find(x=>x.id===el.dataset.id);const e=ev.find(x=>x.c.id===c.id);
     ask(`<h2 style="margin-top:0">Cartón ${esc(c.carton)} · <span style="color:#ff6b6b">Serie ${esc(c.serie)}</span></h2>${miniHTML(c,{called:C,need:new Set(phase==="linea"?(e.miss[e.bestRow]||[]):e.miss.flat())})}`,[{t:"Cerrar",v:null}])});
   renderHeader();
 };
-$("#playWarn").onclick=()=>{S.filter="review";go("cards")};
+$("#playWarn").onclick=()=>{S.filter="pending";go("cards")};
 
 /* ================= arranque ================= */
 (async()=>{

@@ -184,6 +184,21 @@ nav.tabs .badge.bad{background:var(--bad);color:#fff}
 #focusRing.on{animation:fr .8s ease-out}
 @keyframes fr{0%{opacity:1;transform:scale(1.4)}60%{opacity:1;transform:scale(1)}100%{opacity:0}}
 #scanStart{z-index:4}
+
+/* ---------- confirmación de cartones ---------- */
+.fsink{position:absolute;width:1px;height:1px;opacity:0;outline:none}
+.cardbox.st-review{border-color:var(--warn)}
+.cardbox.st-read{border-color:#3b6ea8}
+.cardbox.st-conf{opacity:.92}
+.cardbox{transition:opacity .25s,transform .25s}
+.cardbox.gone{opacity:0;transform:translateX(40px)}
+.chip.okc{color:#86efac;border-color:#14532d}.chip.wc{color:var(--warn)}.chip.rc{color:#93c5fd}
+.cthumb{width:100%;border-radius:8px;display:block;margin-bottom:8px;background:#fff}
+.cacts{display:flex;gap:8px;margin-top:10px}
+.cacts .btn{flex:1}
+.cacts .btn.ok{flex:1.4;font-size:15px}
+.cacts .btn.off{background:#2a1a1d;border-color:#5a2a33;color:#ff8a80;font-size:13px}
+#board button{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;touch-action:manipulation}
 </style>
 </head>
 <body>
@@ -243,7 +258,7 @@ nav.tabs .badge.bad{background:var(--bad);color:#fff}
   <!-- CARTONES -->
   <section class="view" id="v-cards">
     <div class="row" style="margin-bottom:10px"><div class="grow"><b id="cCount">0 cartones</b><div class="mut small" id="cSub"></div></div><button class="btn sm" id="cAdd">+ Manual</button></div>
-    <div class="seg" id="cSeg"><button data-f="all" class="on">Todos</button><button data-f="review">Por revisar</button></div>
+    <div class="seg" id="cSeg"><button data-f="pending" class="on">Por confirmar</button><button data-f="all">Todos</button></div>
     <div id="cList"></div>
   </section>
 
@@ -278,7 +293,7 @@ nav.tabs .badge.bad{background:var(--bad);color:#fff}
 <div class="toast" id="toast"></div>
 <dialog id="dlg"></dialog>
 
-<script>const APPV="bds-1.2";</script>
+<script>const APPV="bds-1.3";</script>
 <script src="log.js"></script>
 <script src="rules.js"></script>
 <script src="reader.js"></script>

@@ -1,5 +1,5 @@
 /* Bingo de la Suerte · funciona sin internet: guarda la app en el teléfono */
-const V="bds-1.2",FILES=["./","index.html","app.js","log.js","rules.js","reader.js","worker.js","tpl.json","manifest.webmanifest","icon-192.png","icon-512.png"];
+const V="bds-1.3",FILES=["./","index.html","app.js","log.js","rules.js","reader.js","worker.js","tpl.json","manifest.webmanifest","icon-192.png","icon-512.png"];
 self.addEventListener("install",e=>{e.waitUntil(caches.open(V).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting()))});
 self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 /* red primero (para recibir mejoras), y si no hay internet, la copia guardada */
